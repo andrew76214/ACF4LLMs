@@ -1,0 +1,341 @@
+# Baseline recipe configurations for LLM Compressor
+# Pre-defined optimization strategies for quick deployment
+
+# Recipe 1: Quantization Only
+quantization_only:
+  name: "AWQ 4-bit Quantization"
+  description: "Apply AWQ 4-bit quantization for maximum compression"
+  enabled: true
+  
+  pipeline:
+    - "data_curation"
+    - "quantization" 
+    - "perf_carbon"
+    - "eval_safety"
+    
+  quantization:
+    enabled: true
+    method: "awq"
+    bits: 4
+    group_size: 128
+    calibration_samples: 512
+    
+  kv_longcontext:
+    enabled: false
+    
+  pruning_sparsity:
+    enabled: false
+    
+  distillation:
+    enabled: false
+    
+  expected_results:
+    compression_ratio: 4.0
+    accuracy_drop: 0.005  # 0.5%
+    latency_improvement: 1.8
+    vram_reduction: 0.75
+
+---
+
+# Recipe 2: KV Optimization Only
+kv_optimization_only:
+  name: "FlashAttention + Paged KV"
+  description: "Optimize KV cache with FlashAttention and paged attention"
+  enabled: true
+  
+  pipeline:
+    - "data_curation"
+    - "kv_longcontext"
+    - "perf_carbon" 
+    - "eval_safety"
+    
+  quantization:
+    enabled: false
+    
+  kv_longcontext:
+    enabled: true
+    attention_type: "flash"
+    paged_attention: true
+    page_size: "2MB"
+    kv_compression: false
+    
+  pruning_sparsity:
+    enabled: false
+    
+  distillation:
+    enabled: false
+    
+  expected_results:
+    memory_efficiency: 1.5
+    accuracy_drop: 0.0
+    latency_improvement: 1.2
+    vram_reduction: 0.3
+
+---
+
+# Recipe 3: Combined Quantization + KV
+quantization_plus_kv:
+  name: "AWQ + FlashAttention"
+  description: "Combine AWQ quantization with KV cache optimization"
+  enabled: true
+  
+  pipeline:
+    - "data_curation"
+    - "quantization"
+    - "kv_longcontext"
+    - "perf_carbon"
+    - "eval_safety"
+    
+  quantization:
+    enabled: true
+    method: "awq"
+    bits: 4
+    group_size: 128
+    calibration_samples: 512
+    
+  kv_longcontext:
+    enabled: true
+    attention_type: "flash"
+    paged_attention: true
+    page_size: "2MB"
+    
+  pruning_sparsity:
+    enabled: false
+    
+  distillation:
+    enabled: false
+    
+  expected_results:
+    compression_ratio: 4.0
+    memory_efficiency: 1.5
+    accuracy_drop: 0.005
+    latency_improvement: 2.2
+    vram_reduction: 0.8
+
+---
+
+# Recipe 4: Aggressive Compression
+aggressive_compression:
+  name: "Max Compression (All Techniques)"
+  description: "Apply all optimization techniques for maximum compression"
+  enabled: true
+  
+  pipeline:
+    - "data_curation"
+    - "quantization"
+    - "pruning_sparsity"
+    - "kv_longcontext"
+    - "distillation"
+    - "perf_carbon"
+    - "eval_safety"
+    
+  quantization:
+    enabled: true
+    method: "awq"
+    bits: 4
+    group_size: 128
+    
+  kv_longcontext:
+    enabled: true
+    attention_type: "flash"
+    paged_attention: true
+    page_size: "2MB"
+    
+  pruning_sparsity:
+    enabled: true
+    head_pruning_ratio: 0.2
+    ffn_pruning_ratio: 0.3
+    structured_sparsity: "2:4"
+    
+  distillation:
+    enabled: true
+    method: "qlora"
+    temperature: 3.5
+    alpha: 0.4
+    num_epochs: 2
+    
+  expected_results:
+    compression_ratio: 8.0
+    accuracy_drop: 0.02  # 2%
+    latency_improvement: 3.0
+    vram_reduction: 0.9
+
+---
+
+# Recipe 5: Conservative Optimization
+conservative_optimization:
+  name: "Conservative (8-bit + KV)"
+  description: "Conservative optimization prioritizing accuracy"
+  enabled: true
+  
+  pipeline:
+    - "data_curation"
+    - "quantization"
+    - "kv_longcontext"
+    - "perf_carbon"
+    - "eval_safety"
+    
+  quantization:
+    enabled: true
+    method: "awq"
+    bits: 8
+    group_size: 64
+    
+  kv_longcontext:
+    enabled: true
+    attention_type: "flash"
+    paged_attention: false
+    
+  pruning_sparsity:
+    enabled: false
+    
+  distillation:
+    enabled: false
+    
+  expected_results:
+    compression_ratio: 2.0
+    accuracy_drop: 0.002  # 0.2%
+    latency_improvement: 1.4
+    vram_reduction: 0.5
+
+---
+
+# Recipe 6: Pruning Focus
+pruning_focus:
+  name: "Structured Pruning + Sparsity"
+  description: "Focus on pruning and structured sparsity"
+  enabled: true
+  
+  pipeline:
+    - "data_curation"
+    - "pruning_sparsity"
+    - "kv_longcontext"
+    - "perf_carbon"
+    - "eval_safety"
+    
+  quantization:
+    enabled: false
+    
+  kv_longcontext:
+    enabled: true
+    attention_type: "flash"
+    
+  pruning_sparsity:
+    enabled: true
+    head_pruning_ratio: 0.15
+    ffn_pruning_ratio: 0.25
+    structured_sparsity: "2:4"
+    pruning_method: "magnitude"
+    
+  distillation:
+    enabled: false
+    
+  expected_results:
+    compression_ratio: 2.5
+    accuracy_drop: 0.015  # 1.5%
+    latency_improvement: 1.8
+    vram_reduction: 0.6
+
+---
+
+# Recipe 7: Distillation Focus
+distillation_focus:
+  name: "LoRA Distillation + Light Quantization"
+  description: "Focus on knowledge distillation with light compression"
+  enabled: true
+  
+  pipeline:
+    - "data_curation"
+    - "quantization"
+    - "distillation"
+    - "perf_carbon"
+    - "eval_safety"
+    
+  quantization:
+    enabled: true
+    method: "bnb"
+    bits: 8
+    
+  kv_longcontext:
+    enabled: false
+    
+  pruning_sparsity:
+    enabled: false
+    
+  distillation:
+    enabled: true
+    method: "lora"
+    temperature: 4.0
+    alpha: 0.3
+    lora_rank: 32
+    num_epochs: 3
+    
+  expected_results:
+    compression_ratio: 2.0
+    accuracy_drop: 0.008  # 0.8%
+    latency_improvement: 1.3
+    vram_reduction: 0.5
+
+---
+
+# Recipe 8: Energy Optimized
+energy_optimized:
+  name: "Energy Efficient Configuration"
+  description: "Optimize for minimum energy consumption"
+  enabled: true
+  
+  pipeline:
+    - "data_curation"
+    - "quantization"
+    - "pruning_sparsity"
+    - "kv_longcontext"
+    - "perf_carbon"
+    - "eval_safety"
+    
+  quantization:
+    enabled: true
+    method: "awq"
+    bits: 4
+    group_size: 128
+    
+  kv_longcontext:
+    enabled: true
+    attention_type: "flash"
+    paged_attention: true
+    
+  pruning_sparsity:
+    enabled: true
+    head_pruning_ratio: 0.1
+    ffn_pruning_ratio: 0.2
+    structured_sparsity: "2:4"
+    
+  distillation:
+    enabled: false
+    
+  expected_results:
+    compression_ratio: 5.0
+    accuracy_drop: 0.012  # 1.2%
+    latency_improvement: 2.5
+    vram_reduction: 0.85
+    energy_reduction: 0.7
+
+# Recipe metadata
+recipe_metadata:
+  total_recipes: 8
+  categories:
+    - "quantization_only"
+    - "kv_optimization" 
+    - "combined"
+    - "aggressive"
+    - "conservative"
+    - "specialized"
+  
+  difficulty_levels:
+    easy: ["quantization_only", "kv_optimization_only", "conservative_optimization"]
+    medium: ["quantization_plus_kv", "pruning_focus", "distillation_focus"]
+    hard: ["aggressive_compression", "energy_optimized"]
+    
+  estimated_execution_time:
+    fast: ["quantization_only", "kv_optimization_only"]  # < 30 min
+    medium: ["quantization_plus_kv", "conservative_optimization", "pruning_focus"]  # 30-60 min
+    slow: ["aggressive_compression", "distillation_focus", "energy_optimized"]  # > 60 min

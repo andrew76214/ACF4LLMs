@@ -1,0 +1,10 @@
+{"id": "mmlu_math_1", "subject": "mathematics", "question": "What is the derivative of x^2?", "choices": ["A) 2x", "B) x", "C) 2", "D) x^2"], "answer": "A", "difficulty": "easy"}
+{"id": "mmlu_math_2", "subject": "mathematics", "question": "What is the integral of 2x?", "choices": ["A) x^2", "B) x^2 + C", "C) 2x^2", "D) 2x^2 + C"], "answer": "B", "difficulty": "medium"}
+{"id": "mmlu_physics_1", "subject": "physics", "question": "What is Newton's first law?", "choices": ["A) F=ma", "B) Objects in motion stay in motion unless acted upon by a force", "C) E=mc^2", "D) F=G(m1*m2)/r^2"], "answer": "B", "difficulty": "medium"}
+{"id": "mmlu_physics_2", "subject": "physics", "question": "What is the speed of light in vacuum?", "choices": ["A) 3 × 10^8 m/s", "B) 3 × 10^6 m/s", "C) 9 × 10^8 m/s", "D) 1 × 10^8 m/s"], "answer": "A", "difficulty": "easy"}
+{"id": "mmlu_chemistry_1", "subject": "chemistry", "question": "What is the chemical symbol for water?", "choices": ["A) H2O", "B) CO2", "C) O2", "D) H2"], "answer": "A", "difficulty": "easy"}
+{"id": "mmlu_chemistry_2", "subject": "chemistry", "question": "What is the atomic number of carbon?", "choices": ["A) 6", "B) 12", "C) 8", "D) 14"], "answer": "A", "difficulty": "easy"}
+{"id": "mmlu_biology_1", "subject": "biology", "question": "What is the powerhouse of the cell?", "choices": ["A) Nucleus", "B) Mitochondria", "C) Ribosome", "D) Vacuole"], "answer": "B", "difficulty": "easy"}
+{"id": "mmlu_biology_2", "subject": "biology", "question": "What molecule carries genetic information?", "choices": ["A) RNA", "B) Protein", "C) DNA", "D) Lipid"], "answer": "C", "difficulty": "easy"}
+{"id": "mmlu_history_1", "subject": "history", "question": "In which year did World War II end?", "choices": ["A) 1944", "B) 1945", "C) 1946", "D) 1947"], "answer": "B", "difficulty": "easy"}
+{"id": "mmlu_history_2", "subject": "history", "question": "Who was the first President of the United States?", "choices": ["A) Thomas Jefferson", "B) John Adams", "C) George Washington", "D) Benjamin Franklin"], "answer": "C", "difficulty": "easy"}

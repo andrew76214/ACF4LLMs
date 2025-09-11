@@ -1,0 +1,168 @@
+# Default configuration for LLM Compressor
+# Multi-agent system for LLM compression and optimization
+
+# Project metadata
+project:
+  name: "llm_compressor"
+  version: "0.1.0"
+  description: "Multi-agent LLM compression with Pareto optimization"
+
+# Model configuration
+model:
+  base_model: "meta-llama/Meta-Llama-3-8B-Instruct"
+  sequence_length: 4096
+  max_model_len: 4096
+  
+# Hardware configuration  
+hardware:
+  gpu: "NVIDIA A100 80GB"
+  gpu_memory_utilization: 0.9
+  vram_limit_gb: 80
+  tensor_parallel_size: 1
+
+# Constraints and objectives
+constraints:
+  max_accuracy_drop: 0.01  # 1.0% maximum accuracy drop
+  p95_latency_ms: 150      # P95 latency threshold
+  max_vram_gb: 80          # VRAM limit
+  carbon_budget_kg: 1.0    # CO2e budget per day
+  baseline_latency_ms: 100 # Baseline latency for comparison
+  baseline_vram_gb: 40     # Baseline VRAM usage
+
+# Objective weights for composite scoring
+objective_weights:
+  accuracy: 1.0      # Maximize accuracy
+  latency: -0.8      # Minimize latency (weight = -0.8)
+  vram: -0.6         # Minimize VRAM usage
+  energy: -0.5       # Minimize energy consumption
+  co2e: -0.3         # Minimize CO2 emissions
+
+# Agent configurations
+agents:
+  data_curation:
+    enabled: true
+    calibration_samples: 512
+    evaluation_samples: 100
+    
+  recipe_planner:
+    enabled: true
+    baseline_recipes: true
+    search_recipes: true
+    custom_recipes: []
+    
+  quantization:
+    enabled: true
+    default_method: "awq"
+    supported_methods: ["awq", "gptq", "bnb"]
+    calibration_samples: 512
+    
+  kv_longcontext:
+    enabled: true
+    default_attention: "flash"
+    paged_attention: true
+    default_page_size: "2MB"
+    
+  pruning_sparsity:
+    enabled: true
+    max_head_pruning: 0.3
+    max_ffn_pruning: 0.4
+    supported_sparsity: ["2:4", "1:2", "4:8"]
+    
+  distillation:
+    enabled: true
+    default_method: "lora"
+    default_temperature: 3.0
+    default_alpha: 0.5
+    
+  rag:
+    enabled: false  # Optional component
+    
+  perf_carbon:
+    enabled: true
+    benchmark_samples: 50
+    grid_emission_factor_kg_per_kwh: 0.4
+    
+  search:
+    enabled: true
+    method: "bayesian"  # "bayesian", "evolutionary", "grid", "random"
+    num_candidates: 20
+    iterations: 50
+    
+  eval_safety:
+    enabled: true
+    
+# Search space configuration
+search:
+  method: "bayesian"
+  num_candidates: 20
+  iterations: 50
+  parallel_workers: 4
+  
+# Evaluation configuration
+evaluation:
+  mmlu:
+    enabled: true
+    num_samples: 100
+    subjects: ["mathematics", "physics", "chemistry", "biology", "history"]
+    
+  gsm8k:
+    enabled: true
+    num_samples: 100
+    
+  mtbench:
+    enabled: true
+    num_samples: 80
+    categories: ["writing", "roleplay", "reasoning", "math", "coding"]
+    
+  safety:
+    enabled: true
+    red_team_samples: 100
+
+# Backend configuration
+backend:
+  default: "vllm"  # "vllm" or "tensorrt"
+  
+vllm:
+  api_url: "http://localhost:8000"
+  port: 8000
+  max_model_len: 4096
+  gpu_memory_utilization: 0.9
+  
+tensorrt:
+  api_url: "http://localhost:8001" 
+  port: 8001
+  max_batch_size: 8
+  max_input_len: 4096
+  
+# Pareto analysis configuration
+pareto:
+  objectives: ["accuracy", "latency", "vram", "energy", "co2e"]
+  maximize: ["accuracy"]  # All others are minimized
+  top_k: 5  # Top K candidates to highlight
+  
+# Registry configuration
+registry:
+  db_path: "experiments.db"
+  artifacts_dir: "artifacts"
+  cleanup_days: 30
+  
+# Metrics configuration  
+metrics:
+  collection_interval: 10  # seconds
+  system_metrics: true
+  gpu_metrics: true
+  energy_estimation: true
+  
+# Logging configuration
+log_level: "INFO"
+log_file: "llm_compressor.log"
+
+# Parallel execution
+max_parallel_workers: 4
+recipe_timeout_minutes: 120
+
+# Output configuration
+output_dir: "reports"
+export_formats: ["json", "html", "csv"]
+create_plots: true
+interactive_plots: true
