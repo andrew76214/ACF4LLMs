@@ -1,0 +1,20 @@
+# Gemma 3 270M baseline evaluation
+gemma_baseline:
+  name: "Gemma 3 270M Baseline"
+  description: "Baseline evaluation of Gemma 3 270M on GSM8K"
+  enabled: true
+
+  pipeline:
+    - "data_curation"
+    - "perf_carbon"
+    - "eval_safety"
+
+  # 不使用任何優化技術，純 baseline
+  quantization:
+    enabled: false
+  kv_longcontext:
+    enabled: false
+  pruning_sparsity:
+    enabled: false
+  distillation:
+    enabled: false

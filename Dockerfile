@@ -1,11 +1,12 @@
 # Dockerfile for LLM Compressor
 # Multi-agent system for LLM compression and optimization
 
-FROM nvidia/cuda:11.8-devel-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
@@ -15,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-dev \
+    python3-venv \
     git \
     wget \
     curl \
@@ -22,10 +24,10 @@ RUN apt-get update && apt-get install -y \
     cmake \
     ninja-build \
     software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/python3 /usr/bin/python
 
-# Upgrade pip and install basic Python packages
-RUN python3 -m pip install --upgrade pip setuptools wheel
+# Use system pip directly
 
 # Set working directory
 WORKDIR /app
@@ -33,27 +35,19 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install essential packages first
+RUN pip install --no-cache-dir \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# Install PyTorch with CUDA support
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-# Install additional ML libraries
-RUN pip install \
+# Install core ML libraries
+RUN pip install --no-cache-dir \
     transformers>=4.36.0 \
     accelerate \
     datasets \
-    auto-gptq[triton] \
-    autoawq \
-    bitsandbytes \
-    flash-attn --no-build-isolation
-
-# Install vLLM (optional, comment out if not needed)
-RUN pip install vllm
+    bitsandbytes
 
 # Install monitoring and visualization libraries
-RUN pip install \
+RUN pip install --no-cache-dir \
     plotly \
     pynvml \
     GPUtil \
@@ -61,23 +55,25 @@ RUN pip install \
     scikit-learn \
     pandas \
     numpy \
-    pyyaml
+    pyyaml \
+    tqdm \
+    click
+
+# Install vLLM (optional, comment out if causing issues)
+# RUN pip install --no-cache-dir vllm
 
 # Install development tools
-RUN pip install \
+RUN pip install --no-cache-dir \
     pytest \
     black \
-    isort \
-    flake8 \
-    mypy
+    isort
 
 # Copy the project files
 COPY llm_compressor/ ./llm_compressor/
-COPY configs/ ./configs/
-COPY scripts/ ./scripts/
-COPY evals/ ./evals/
+COPY llm_compressor/configs/ ./configs/
+COPY llm_compressor/scripts/ ./scripts/
 COPY Makefile .
-COPY *.md .
+COPY README.md .
 
 # Create necessary directories
 RUN mkdir -p reports artifacts logs
@@ -85,15 +81,15 @@ RUN mkdir -p reports artifacts logs
 # Set permissions for scripts
 RUN chmod +x scripts/*.py scripts/*.sh
 
-# Create a non-root user
-RUN useradd -m -u 1000 llmuser && \
+# Create a non-root user (use different UID to avoid conflict)
+RUN useradd -m -u 1001 llmuser && \
     chown -R llmuser:llmuser /app
 
 # Switch to non-root user
 USER llmuser
 
 # Set Python path
-ENV PYTHONPATH=/app:${PYTHONPATH}
+ENV PYTHONPATH=/app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
