@@ -97,17 +97,27 @@ class DistillationAgent(BaseAgent):
     def _get_input_model_path(self, context: Dict[str, Any]) -> str:
         """Get the input model path from previous agents."""
         artifacts = context.get("artifacts", {})
-        
+
         # Priority: pruning -> kv -> quantization -> base
         for agent in ["pruning_sparsity", "kv_longcontext", "quantization"]:
             if agent in artifacts:
                 model_path = artifacts[agent].get("pruned_model_path") or \
                            artifacts[agent].get("optimized_model_path") or \
                            artifacts[agent].get("quantized_model_path")
-                if model_path:
+                if model_path and not self._is_mock_path(model_path):
                     return model_path
-        
-        return context.get("model_path", "mock_model")
+                elif model_path and self._is_mock_path(model_path):
+                    self.logger.warning(f"Agent {agent} returned mock path {model_path}, continuing search")
+
+        return context.get("model_path", "google/gemma-2-2b")
+
+    def _is_mock_path(self, path: str) -> bool:
+        """Check if a model path is a mock/fake path."""
+        if not path:
+            return True
+
+        mock_indicators = ["mock", "_awq_", "_bnb_", "_gptq_", "tmp/models"]
+        return any(indicator in path.lower() for indicator in mock_indicators)
     
     def _apply_lora_distillation(self, student_path: str, teacher_path: str,
                                 config: Dict[str, Any]) -> Dict[str, Any]:

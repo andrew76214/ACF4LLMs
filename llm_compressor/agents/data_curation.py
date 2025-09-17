@@ -120,8 +120,12 @@ class DataCurationAgent(BaseAgent):
             
             self.logger.info("Loading C4 calibration dataset from HuggingFace")
             
-            # Load C4 dataset subset for calibration
-            dataset = load_dataset("c4", "en", split="validation", streaming=True)
+            # Load C4 dataset subset for calibration - use alternative approach
+            try:
+                dataset = load_dataset("allenai/c4", "en", split="validation", streaming=True)
+            except:
+                # Fallback to a different dataset that works
+                dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="validation", streaming=True)
             
             samples = []
             for i, sample in enumerate(dataset):

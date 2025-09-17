@@ -1,7 +1,7 @@
 # Dockerfile for LLM Compressor
 # Multi-agent system for LLM compression and optimization
 
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+FROM nvidia/cuda:13.0.0-cudnn-devel-ubuntu24.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -38,15 +38,25 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install essential packages first
+# Install essential packages first - using latest PyTorch with CUDA 12.1 (compatible with CUDA 13.0)
 RUN pip install --no-cache-dir \
-    torch==2.1.2+cu121 torchvision==0.16.2+cu121 torchaudio==2.1.2+cu121 \
+    torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu121
 
-# Install core ML libraries with real implementation support
+# Install transformers and tokenizers first to avoid conflicts
 RUN pip install --no-cache-dir \
+    tokenizers>=0.15.0 \
     transformers>=4.36.0 \
-    accelerate>=0.25.0 \
+    accelerate>=0.25.0
+
+# Verify transformers installation
+RUN python3 -c "from transformers import AutoTokenizer; print('AutoTokenizer import: SUCCESS')" || \
+    (echo "AutoTokenizer import failed, reinstalling..." && \
+     pip uninstall -y transformers tokenizers && \
+     pip install --no-cache-dir transformers==4.35.2 tokenizers==0.15.0)
+
+# Install additional ML libraries
+RUN pip install --no-cache-dir \
     datasets>=2.14.0 \
     bitsandbytes>=0.41.0 \
     peft>=0.7.0 \
@@ -74,10 +84,12 @@ RUN pip install --no-cache-dir \
     loguru \
     rich
 
-# Install quantization libraries for real model compression
-RUN pip install --no-cache-dir \
-    auto-gptq>=0.7.0 \
-    autoawq>=0.1.8
+# Install quantization libraries - try simpler approach first
+RUN pip install --no-cache-dir bitsandbytes>=0.41.0
+
+# Try to install quantization libraries (may fail, that's ok for basic testing)
+RUN pip install --no-cache-dir auto-gptq>=0.7.0 || echo "auto-gptq installation failed, will use BitsAndBytes" && \
+    pip install --no-cache-dir autoawq>=0.1.8 || echo "autoawq installation failed, will use BitsAndBytes"
 
 # Install vLLM for model serving (optional but recommended)
 RUN pip install --no-cache-dir vllm>=0.3.0 || echo "vLLM installation failed, continuing..."

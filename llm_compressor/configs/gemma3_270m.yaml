@@ -1,24 +1,24 @@
 # Model configuration for Gemma 3 270M
   model:
-    base_model: "openai-community/gpt2"     # GPT-2 開放模型，無需認證
-    # base_model: "microsoft/DialoGPT-small"  # 也可以用這個
-    # base_model: "google/gemma-2b"  # 需要認證
-    sequence_length: 1024              # GPT-2 支援 1K context
-    max_model_len: 1024
+    base_model: "google/gemma-3-4b-it"    # Gemma 3 4B instruct 模型
+    # base_model: "google/gemma-2-9b"    # Gemma 2 9B 版本
+    # base_model: "google/gemma-2-2b"    # Gemma 2 2B 版本
+    sequence_length: 4096              # Gemma 3 支援 4K context
+    max_model_len: 4096
 
-  # Hardware configuration (270M 模型需求較低)
+  # Hardware configuration (4B 模型需求中等)
   hardware:
     gpu: "NVIDIA RTX 4090"            # 或你實際的 GPU
-    gpu_memory_utilization: 0.5       # 270M 模型不需要太多 VRAM
-    vram_limit_gb: 8                  # 8GB 就足夠了
+    gpu_memory_utilization: 0.85      # 4B 模型需要較多 VRAM
+    vram_limit_gb: 22                  # 4090 有 24GB，用 22GB
     tensor_parallel_size: 1
 
-  # 調整約束條件 (小模型可能準確率較低)
+  # 調整約束條件 (4B 模型性能很好)
   constraints:
-    max_accuracy_drop: 0.05           # 允許 5% 準確率下降
-    p95_latency_ms: 50                # 小模型延遲較低
-    max_vram_gb: 8
-    baseline_latency_ms: 30
+    max_accuracy_drop: 0.02           # 允許 2% 準確率下降
+    p95_latency_ms: 150               # 4B 模型延遲稍高
+    max_vram_gb: 22
+    baseline_latency_ms: 80
 
   # 只啟用需要的 agents
   agents:
@@ -41,13 +41,49 @@
     eval_safety:
       enabled: true
 
-  # 只評測 GSM8K
+  # 評測五個重要數據集
   evaluation:
-    mmlu:
-      enabled: false
+    # Mathematical reasoning
     gsm8k:
       enabled: true
-      num_samples: 500                # 可以調整樣本數量
+      num_samples: 300                # 數學推理樣本
+      dataset_name: "gsm8k"
+      split: "test"
+
+    # Truthfulness and factuality
+    truthfulqa:
+      enabled: true
+      num_samples: 200                # 真實性問答樣本
+      dataset_name: "truthful_qa"
+      split: "validation"
+      task_type: "mc1"                # Multiple choice format
+
+    # Commonsense reasoning
+    commonsenseqa:
+      enabled: true
+      num_samples: 250                # 常識推理樣本
+      dataset_name: "commonsense_qa"
+      split: "validation"
+
+    # Code generation
+    humaneval:
+      enabled: true
+      num_samples: 164                # 程式設計樣本 (full dataset)
+      dataset_name: "openai_humaneval"
+      split: "test"
+      pass_k: [1, 10, 100]            # Pass@k metrics
+
+    # Complex reasoning
+    bigbench_hard:
+      enabled: true
+      num_samples: 200                # 複雜推理樣本
+      dataset_name: "bigbench"
+      split: "hard"
+      subtasks: ["causal_judgement", "date_understanding", "formal_fallacies"]
+
+    # Disable old datasets
+    mmlu:
+      enabled: false
     mtbench:
       enabled: false
     safety:

@@ -98,7 +98,10 @@ class Orchestrator:
         context = {
             "config": self.config,
             "recipe_id": recipe_id,
-            "artifacts": {}
+            "artifacts": {},
+            "model_path": self.config.get("model", {}).get("base_model", "google/gemma-3-4b-it"),
+            "model_config": self.config.get("model", {}),
+            "hardware_config": self.config.get("hardware", {})
         }
         
         results = {}

@@ -1,1 +1,4 @@
 .claude/
+llm_compressor/__pycache__/
+llm_compressor/core/__pycache__/
+llm_compressor/reports/

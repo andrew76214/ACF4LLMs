@@ -48,19 +48,23 @@ make setup-dev
 ```bash
 # Default optimization
 make run
-python llm_compressor/scripts/run_search.py --config llm_compressor/configs/default.yaml
+python scripts/run_search.py --config configs/default.yaml --output reports
 
 # Baseline recipes only
 make run-baseline
-python llm_compressor/scripts/run_search.py --config llm_compressor/configs/default.yaml --recipes baseline
+python scripts/run_search.py --config configs/default.yaml --recipes baseline --output reports/baseline
 
 # Search optimization
 make run-search
-python llm_compressor/scripts/run_search.py --config llm_compressor/configs/default.yaml --recipes search
+python scripts/run_search.py --config configs/default.yaml --recipes search --output reports/search
 
 # Export results
 make export
-python llm_compressor/scripts/export_report.py --db experiments.db --output analysis_report
+python scripts/export_report.py --db experiments.db --output analysis_report
+
+# Export from JSON summary
+make export-json
+python scripts/export_report.py --input reports/execution_summary.json --output analysis_report
 ```
 
 ### Testing and Quality Assurance
@@ -75,16 +79,25 @@ python -m pytest tests/ -v -x --tb=short
 
 # Linting
 make lint
-flake8 llm_compressor/ --max-line-length=100 --ignore=E203,W503
+flake8 llm_compressor/ scripts/ --max-line-length=100 --ignore=E203,W503
 mypy llm_compressor/ --ignore-missing-imports
 
 # Code formatting
 make format
-black llm_compressor/ --line-length=100
-isort llm_compressor/ --profile black
+black llm_compressor/ scripts/ --line-length=100
+isort llm_compressor/ scripts/ --profile black
+
+# Format checking
+make format-check
+black llm_compressor/ scripts/ --line-length=100 --check
+isort llm_compressor/ scripts/ --profile black --check-only
 
 # All quality checks
 make check
+
+# CI/CD pipeline tests
+make ci-test
+make ci-build
 ```
 
 ### Docker Operations
@@ -97,14 +110,20 @@ make run-docker
 
 # Interactive Docker session
 make run-interactive
+
+# Quickstart with Docker
+make quickstart-docker
+
+# Clean Docker resources
+make clean-docker
 ```
 
 ## Configuration System
 
 ### Main Configuration
-- Primary config: `llm_compressor/configs/default.yaml`
-- Baseline recipes: `llm_compressor/configs/recipes_baseline.yaml`
-- Model-specific configs available (e.g., `gemma3_270m.yaml`)
+- Primary config: `configs/default.yaml`
+- Baseline recipes: `configs/recipes_baseline.yaml`
+- Model-specific configs available (e.g., `configs/gemma3_270m.yaml`, `configs/gemma3_baseline.yaml`)
 
 ### Key Configuration Sections
 - `model`: Base model settings, sequence length
@@ -117,10 +136,10 @@ make run-interactive
 ## Agent Development
 
 ### Adding New Agents
-1. Inherit from `BaseAgent` in `llm_compressor/agents/base.py`
+1. Inherit from `BaseAgent` in `agents/base.py`
 2. Implement the `execute()` method returning `AgentResult`
-3. Register in orchestrator's `_initialize_agents()`
-4. Add configuration in YAML files
+3. Register in orchestrator's `_initialize_agents()` method
+4. Add configuration parameters in YAML config files
 
 ### Agent Result Structure
 ```python
@@ -150,13 +169,28 @@ Built-in support for:
 ```bash
 # Debug mode with verbose logging
 make debug
-python llm_compressor/scripts/run_search.py --log-level DEBUG
+python scripts/run_search.py --config configs/default.yaml --log-level DEBUG --output reports/debug
 
 # System monitoring
 make monitor
+watch -n 5 'nvidia-smi; echo ""; ps aux | grep python | head -10'
 
 # Validate configuration
 make validate-config
+python scripts/run_search.py --config configs/default.yaml --dry-run
+
+# Environment information
+make env-info
+
+# Performance benchmarking
+make benchmark
+
+# Multi-GPU execution
+make run-multi-gpu
+CUDA_VISIBLE_DEVICES=0,1 python scripts/run_search.py --config configs/default.yaml --output reports/multi_gpu
+
+# Custom recipes
+make run-custom RECIPE=path/to/custom_recipe.yaml
 ```
 
 ## Optimization Techniques
@@ -166,6 +200,23 @@ make validate-config
 - **Distillation**: LoRA, QLoRA with temperature scaling
 - **KV Optimization**: Sliding window, compression techniques
 
+## Cleanup and Maintenance
+```bash
+# Clean generated files
+make clean
+rm -rf reports/* artifacts/* logs/*
+
+# Clean Docker resources
+make clean-docker
+
+# Full cleanup (files + Docker)
+make clean-all
+
+# Remove Python cache files
+find . -type f -name "*.pyc" -delete
+find . -type d -name "__pycache__" -delete
+```
+
 ## Key Dependencies
 - PyTorch ≥ 2.1.0 with CUDA support
 - Transformers ≥ 4.36.0
@@ -174,3 +225,5 @@ make validate-config
 - Optimization: scipy, optuna, DEAP
 - Visualization: plotly, matplotlib, seaborn
 - Monitoring: pynvml, GPUtil, psutil
+- Development: pytest, black, isort, flake8, mypy
+- to

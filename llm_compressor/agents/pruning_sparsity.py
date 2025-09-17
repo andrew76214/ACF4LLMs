@@ -105,14 +105,31 @@ class PruningSparsityAgent(BaseAgent):
     def _get_input_model_path(self, context: Dict[str, Any]) -> str:
         """Get the input model path from previous agents."""
         artifacts = context.get("artifacts", {})
-        
+
         # Check for quantized model first
         if "quantization" in artifacts:
             quantized_path = artifacts["quantization"].get("quantized_model_path")
-            if quantized_path:
+            if quantized_path and not self._is_mock_path(quantized_path):
                 return quantized_path
-        
-        return context.get("model_path", "mock_model")
+            elif quantized_path and self._is_mock_path(quantized_path):
+                # If quantization used a mock path, fall back to original model
+                self.logger.warning(f"Quantization returned mock path {quantized_path}, using original model")
+
+        # Check for KV optimized model
+        if "kv_longcontext" in artifacts:
+            kv_path = artifacts["kv_longcontext"].get("optimized_model_path")
+            if kv_path and not self._is_mock_path(kv_path):
+                return kv_path
+
+        return context.get("model_path", "google/gemma-2-2b")
+
+    def _is_mock_path(self, path: str) -> bool:
+        """Check if a model path is a mock/fake path."""
+        if not path:
+            return True
+
+        mock_indicators = ["mock", "_awq_", "_bnb_", "_gptq_", "tmp/models"]
+        return any(indicator in path.lower() for indicator in mock_indicators)
     
     def _apply_head_pruning(self, model_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
         """Apply attention head pruning."""
