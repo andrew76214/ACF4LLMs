@@ -91,7 +91,7 @@ python scripts/run_pipeline.py \
 
 輸出範例：
 ```
-📊 Model Specification
+Model Specification
 ========================
 Model: meta-llama/Meta-Llama-3-8B-Instruct
 Parameters: 8.03B
@@ -252,26 +252,32 @@ python scripts/run_pipeline.py [OPTIONS]
 
 ## 開發狀態
 
-### 階段 1（MVP）✅ 完成
+### 階段 1（MVP）- 完成
 - 基本協調器與規格推斷
 - Pareto 前緣追蹤
 - CLI 介面
 
-### 階段 2 ✅ 完成
+### 階段 2 - 完成
 - LangGraph 重構
 - GPT-4o LLM 驅動決策
 - 真實量化工具整合
 
-### 階段 3（進行中）
-- 完整基準測試實作
+### 階段 3 - 進行中
+- 真實評估系統整合（BenchmarkRunner）
+- 真實延遲/記憶體測量（LatencyEvaluator）
+- codecarbon 能源追蹤
+- HumanEval 程式碼執行測試
 - 剪枝代理
 - 微調代理（LoRA/QLoRA）
 
-### 階段 4（計劃中）
+### 階段 4 - 計劃中
+- lm-eval 完整整合
 - 蒸餾支援
 - MLflow 整合
 - Streamlit 儀表板
 - Docker 部署
+
+詳見 `TODO.md` 了解剩餘待實作項目。
 
 ## 測試
 

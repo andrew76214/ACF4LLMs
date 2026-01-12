@@ -91,24 +91,110 @@ def estimate_quantization_vram(
         Dictionary with VRAM estimates:
         - required_vram_gb: Minimum VRAM needed
         - recommended_vram_gb: Recommended VRAM for smooth operation
+        - model_size_gb: Estimated model size
     """
-    # Mock estimation based on model size
-    # In production, this would analyze the actual model
-    base_model_size_gb = 16.0  # Assuming 8B model
+    model_size_gb = None
+
+    # Method 1: Try to get model info from HuggingFace Hub
+    try:
+        from huggingface_hub import model_info
+
+        info = model_info(model_path)
+        # Calculate size from model files
+        model_size_bytes = sum(
+            s.size for s in info.siblings
+            if s.rfilename.endswith(('.safetensors', '.bin', '.pt', '.pth'))
+            and s.size is not None
+        )
+        if model_size_bytes > 0:
+            model_size_gb = model_size_bytes / (1024**3)
+            logger.info(f"Got model size from HuggingFace Hub: {model_size_gb:.2f} GB")
+    except Exception as e:
+        logger.debug(f"Could not get model info from Hub: {e}")
+
+    # Method 2: Try to load config and estimate from parameters
+    if model_size_gb is None:
+        try:
+            from transformers import AutoConfig
+
+            config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+
+            # Calculate approximate parameter count based on architecture
+            hidden_size = getattr(config, 'hidden_size', getattr(config, 'd_model', 768))
+            num_layers = getattr(config, 'num_hidden_layers', getattr(config, 'n_layer', 12))
+            vocab_size = getattr(config, 'vocab_size', 50257)
+            intermediate_size = getattr(config, 'intermediate_size',
+                                       getattr(config, 'n_inner', hidden_size * 4))
+            num_heads = getattr(config, 'num_attention_heads', getattr(config, 'n_head', 12))
+
+            # Estimate parameter count for transformer architecture
+            # Embeddings
+            embed_params = vocab_size * hidden_size
+
+            # Per layer: attention (Q, K, V, O) + FFN (up, down)
+            attention_params = 4 * hidden_size * hidden_size  # Q, K, V, O projections
+            ffn_params = 2 * hidden_size * intermediate_size  # up and down projections
+            layer_norm_params = 4 * hidden_size  # 2 layer norms per layer
+
+            per_layer_params = attention_params + ffn_params + layer_norm_params
+            total_params = embed_params + (num_layers * per_layer_params) + hidden_size  # final layer norm
+
+            # Size in GB (assuming FP16 = 2 bytes per param)
+            model_size_gb = (total_params * 2) / (1024**3)
+            logger.info(f"Estimated model size from config: {model_size_gb:.2f} GB ({total_params/1e9:.2f}B params)")
+
+        except Exception as e:
+            logger.debug(f"Could not estimate from config: {e}")
+
+    # Method 3: Fallback to size estimation from name
+    if model_size_gb is None:
+        import re
+        # Try to extract size from model name
+        patterns = [
+            (r'(\d+)B', 1e9),    # 7B, 13B, 70B
+            (r'(\d+\.\d+)B', 1e9),  # 1.3B, 6.7B
+            (r'(\d+)b', 1e9),    # 7b, 13b
+            (r'(\d+)M', 1e6),    # 125M, 350M
+            (r'(\d+)m', 1e6),    # 125m
+        ]
+
+        for pattern, multiplier in patterns:
+            match = re.search(pattern, model_path)
+            if match:
+                size_value = float(match.group(1))
+                model_size_gb = (size_value * multiplier * 2) / 1e9  # 2 bytes per param (FP16)
+                logger.info(f"Estimated model size from name: {model_size_gb:.2f} GB")
+                break
+
+    # Final fallback
+    if model_size_gb is None:
+        logger.warning(f"Could not determine model size for {model_path}, using default 14GB (7B model)")
+        model_size_gb = 14.0
 
     # Different methods have different memory requirements
     method_multipliers = {
-        "autoround": 2.5,  # Needs model + gradients
-        "gptq": 2.0,       # Needs model + calibration data
-        "int8": 1.5,       # Simpler method
+        "autoround": 2.5,  # Needs model + gradients + optimizer states
+        "gptq": 2.0,       # Needs model + calibration data + intermediate states
+        "int8": 1.5,       # Simpler method, less overhead
         "awq": 2.0,        # Similar to GPTQ
     }
 
     multiplier = method_multipliers.get(method.lower(), 2.0)
 
+    required_vram = model_size_gb * multiplier
+    recommended_vram = model_size_gb * (multiplier + 0.5)
+
+    print(f"[VRAM] Model size: {model_size_gb:.1f} GB")
+    print(f"[VRAM] Required for {method}: {required_vram:.1f} GB")
+    print(f"[VRAM] Recommended: {recommended_vram:.1f} GB")
+
     return {
-        "required_vram_gb": base_model_size_gb * multiplier,
-        "recommended_vram_gb": base_model_size_gb * (multiplier + 0.5),
+        "model_size_gb": model_size_gb,
+        "required_vram_gb": required_vram,
+        "recommended_vram_gb": recommended_vram,
+        "method": method,
+        "bit_width": bit_width,
+        "multiplier": multiplier,
     }
 
 
@@ -166,6 +252,124 @@ def validate_quantization_compatibility(
 
 
 @tool
+def apply_lora_finetuning(
+    model_path: str,
+    lora_rank: int = 16,
+    lora_alpha: int = 32,
+    training_steps: int = 100,
+    learning_rate: float = 2e-4,
+    calibration_dataset: Optional[str] = None,
+    output_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Apply LoRA fine-tuning to adapt a model with low-rank adapters.
+
+    LoRA (Low-Rank Adaptation) adds small trainable adapter layers to a frozen
+    base model, enabling efficient fine-tuning without modifying original weights.
+
+    Args:
+        model_path: Path to the model checkpoint or HuggingFace model name
+        lora_rank: Rank of LoRA decomposition (8, 16, 32, or 64). Higher = more capacity
+        lora_alpha: LoRA scaling factor (typically 2x rank)
+        training_steps: Number of training steps (default: 100)
+        learning_rate: Learning rate for adapter training (default: 2e-4)
+        calibration_dataset: Dataset name for fine-tuning (optional)
+        output_dir: Directory to save adapter weights (auto-generated if None)
+
+    Returns:
+        Dictionary with fine-tuning results including:
+        - checkpoint_path: Path to saved adapter
+        - adapter_size_mb: Size of adapter weights in MB
+        - training_loss: Final training loss
+        - training_time_sec: Time taken for training
+    """
+    print(f"[LoRA] Starting LoRA fine-tuning with rank={lora_rank}, alpha={lora_alpha}...")
+
+    try:
+        trainer = get_quantizer("lora")
+        result = trainer.finetune(
+            model_name=model_path,
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            training_steps=training_steps,
+            learning_rate=learning_rate,
+            calibration_dataset=calibration_dataset,
+            output_dir=output_dir,
+        )
+
+        print(f"[LoRA] Completed! Adapter saved to {result['checkpoint_path']}")
+        print(f"[LoRA] Adapter size: {result['adapter_size_mb']:.2f} MB")
+        print(f"[LoRA] Training loss: {result['training_loss']:.4f}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"LoRA fine-tuning failed: {e}")
+        raise
+
+
+@tool
+def apply_qlora_finetuning(
+    model_path: str,
+    lora_rank: int = 16,
+    lora_alpha: int = 32,
+    bits: int = 4,
+    training_steps: int = 100,
+    learning_rate: float = 2e-4,
+    calibration_dataset: Optional[str] = None,
+    output_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Apply QLoRA (4-bit quantization + LoRA) for memory-efficient fine-tuning.
+
+    QLoRA loads the base model in 4-bit precision and trains LoRA adapters on top,
+    enabling fine-tuning of large models on consumer GPUs with limited VRAM.
+
+    Args:
+        model_path: Path to the model checkpoint or HuggingFace model name
+        lora_rank: Rank of LoRA decomposition (8, 16, 32, or 64)
+        lora_alpha: LoRA scaling factor (typically 2x rank)
+        bits: Quantization bits for base model (default: 4)
+        training_steps: Number of training steps (default: 100)
+        learning_rate: Learning rate for adapter training (default: 2e-4)
+        calibration_dataset: Dataset name for fine-tuning (optional)
+        output_dir: Directory to save adapter weights (auto-generated if None)
+
+    Returns:
+        Dictionary with fine-tuning results including:
+        - checkpoint_path: Path to saved adapter
+        - adapter_size_mb: Size of adapter weights in MB
+        - training_loss: Final training loss
+        - training_time_sec: Time taken for training
+        - base_model_bits: Quantization bits for base model (4)
+        - total_vram_gb: Peak VRAM usage during training
+    """
+    print(f"[QLoRA] Starting QLoRA fine-tuning with {bits}-bit base, rank={lora_rank}...")
+
+    try:
+        trainer = get_quantizer("qlora")
+        result = trainer.finetune(
+            model_name=model_path,
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            bits=bits,
+            training_steps=training_steps,
+            learning_rate=learning_rate,
+            calibration_dataset=calibration_dataset,
+            output_dir=output_dir,
+        )
+
+        print(f"[QLoRA] Completed! Adapter saved to {result['checkpoint_path']}")
+        print(f"[QLoRA] Adapter size: {result['adapter_size_mb']:.2f} MB")
+        print(f"[QLoRA] Training loss: {result['training_loss']:.4f}")
+        print(f"[QLoRA] Peak VRAM: {result['total_vram_gb']:.2f} GB")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"QLoRA fine-tuning failed: {e}")
+        raise
+
+
+@tool
 def list_available_quantization_methods() -> List[Dict[str, Any]]:
     """List all available quantization methods with their characteristics.
 
@@ -204,6 +408,22 @@ def list_available_quantization_methods() -> List[Dict[str, Any]]:
             "pros": ["Preserves important weights", "Good for LLMs"],
             "cons": ["Limited bit width options"],
             "recommended_for": ["Llama models", "Chat applications"],
+        },
+        {
+            "name": "lora",
+            "description": "Low-Rank Adaptation - adds small trainable adapters",
+            "supported_bits": [16],
+            "pros": ["Preserves base model", "Fast to train", "Small adapter files"],
+            "cons": ["Requires training compute", "No direct compression"],
+            "recommended_for": ["Recovery after quantization", "Task-specific adaptation"],
+        },
+        {
+            "name": "qlora",
+            "description": "Quantized LoRA - 4-bit base model with trainable adapters",
+            "supported_bits": [4],
+            "pros": ["Memory efficient", "Combines quantization + adaptation"],
+            "cons": ["Requires GPU with 4-bit support"],
+            "recommended_for": ["Fine-tuning large models on limited VRAM"],
         },
     ]
 
@@ -281,5 +501,7 @@ __all__ = [
     "estimate_quantization_vram",
     "validate_quantization_compatibility",
     "list_available_quantization_methods",
+    "apply_lora_finetuning",
+    "apply_qlora_finetuning",
     "get_quantization_subagent",
 ]

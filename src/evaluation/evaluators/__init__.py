@@ -1,17 +1,20 @@
-"""Benchmark evaluators for model evaluation."""
+"""Benchmark evaluators for model evaluation.
 
-from src.evaluation.evaluators.gsm8k_evaluator import GSM8KEvaluator
-from src.evaluation.evaluators.commonsense_evaluator import CommonsenseQAEvaluator
-from src.evaluation.evaluators.truthful_evaluator import TruthfulQAEvaluator
+This module provides evaluators for benchmarking LLM performance:
+- LMEvalEvaluator: Standardized evaluation using EleutherAI's lm-eval harness
+- HumanEvalEvaluator: Code generation evaluation with execution
+- LatencyEvaluator: Performance and latency measurement
+- BaseEvaluator: Base class for custom evaluators
+"""
+
+from src.evaluation.evaluators.lm_eval_evaluator import LMEvalEvaluator
 from src.evaluation.evaluators.humaneval_evaluator import HumanEvalEvaluator
-from src.evaluation.evaluators.bigbench_hard_evaluator import BigBenchHardEvaluator
 from src.evaluation.evaluators.latency_evaluator import LatencyEvaluator
+from src.evaluation.evaluators.base_evaluator import BaseEvaluator
 
 __all__ = [
-    "GSM8KEvaluator",
-    "CommonsenseQAEvaluator",
-    "TruthfulQAEvaluator",
+    "LMEvalEvaluator",
     "HumanEvalEvaluator",
-    "BigBenchHardEvaluator",
     "LatencyEvaluator",
+    "BaseEvaluator",
 ]

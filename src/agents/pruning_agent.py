@@ -1,17 +1,85 @@
-"""Pruning Agent for model compression using structured and unstructured pruning."""
+"""Pruning Agent for model compression using LangGraph tools.
+
+Provides both magnitude-based (unstructured) and structured pruning methods
+for compressing neural network models.
+"""
 
 import json
 import os
 import time
 import torch
 import torch.nn as nn
-from typing import Dict, Optional, Any, List, Tuple
+from typing import Dict, Optional, Any, List
 from datetime import datetime
 from pathlib import Path
 from langchain_core.tools import tool
 import logging
 
+from src.common.schemas import CompressionMethod
+from src.tools.pruning_wrapper import get_pruner, estimate_pruning_benefits
+
 logger = logging.getLogger(__name__)
+
+
+@tool
+def prune_model(
+    model_path: str,
+    method: str,
+    sparsity: float = 0.3,
+    granularity: str = "weight",
+    output_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Apply pruning to a model checkpoint.
+
+    This is the main pruning entry point that delegates to the appropriate
+    pruning method based on the specified parameters.
+
+    Args:
+        model_path: Path to the model checkpoint or HuggingFace model name
+        method: Pruning method ('magnitude' or 'structured')
+        sparsity: Target sparsity ratio (0.0 - 1.0, e.g., 0.3 = 30% weights removed)
+        granularity: Pruning granularity ('weight' for magnitude, 'channel'/'head' for structured)
+        output_dir: Directory to save pruned model (auto-generated if None)
+
+    Returns:
+        Dictionary with pruning results including:
+        - checkpoint_path: Path to pruned model
+        - model_size_gb: Size of pruned model
+        - compression_ratio: Compression ratio achieved
+        - actual_sparsity: Actual sparsity achieved
+        - pruning_time_sec: Time taken for pruning
+        - metadata: Additional pruning metadata
+    """
+    print(f"[Pruning] Starting {method} pruning with {sparsity*100:.0f}% sparsity...")
+
+    try:
+        # Get the appropriate pruner
+        pruner = get_pruner(method, granularity)
+
+        # Run pruning
+        if method.lower() == "magnitude":
+            result = pruner.prune(
+                model_name=model_path,
+                sparsity=sparsity,
+                output_dir=output_dir,
+            )
+        else:  # structured
+            result = pruner.prune(
+                model_name=model_path,
+                sparsity=sparsity,
+                granularity=granularity,
+                output_dir=output_dir,
+            )
+
+        print(f"[Pruning] Completed! Saved to {result['checkpoint_path']}")
+        print(f"[Pruning] Actual sparsity: {result['actual_sparsity']*100:.1f}%")
+        print(f"[Pruning] Compression ratio: {result['compression_ratio']:.2f}x")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Pruning failed: {e}")
+        raise
 
 
 @tool
@@ -140,7 +208,7 @@ def prune_model_structured(
         json.dump(metadata, f, indent=2, default=str)
 
     print(f"[Pruning] Completed with {actual_sparsity:.1%} sparsity")
-    print(f"[Pruning] Model size: {original_size:.1f} GB → {pruned_size:.1f} GB")
+    print(f"[Pruning] Model size: {original_size:.1f} GB -> {pruned_size:.1f} GB")
 
     return {
         "checkpoint_path": output_dir,
@@ -160,7 +228,7 @@ def prune_model_unstructured(
     granularity: str = "weight",
     output_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Apply unstructured pruning (SparseGPT-style).
+    """Apply unstructured magnitude pruning.
 
     Args:
         checkpoint_path: Model checkpoint path
@@ -172,7 +240,7 @@ def prune_model_unstructured(
     Returns:
         Dictionary with pruning results
     """
-    print(f"[SparseGPT] Starting unstructured pruning with {sparsity:.0%} sparsity")
+    print(f"[Pruning] Starting unstructured pruning with {sparsity:.0%} sparsity")
 
     start_time = time.time()
 
@@ -192,8 +260,9 @@ def prune_model_unstructured(
             checkpoint_path,
             torch_dtype=torch.float16,
             device_map="auto",
+            trust_remote_code=True,
         )
-        tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
+        tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, trust_remote_code=True)
 
         # Apply unstructured pruning
         parameters_to_prune = []
@@ -248,13 +317,15 @@ def prune_model_unstructured(
 
     pruning_time = time.time() - start_time
 
-    print(f"[SparseGPT] Achieved {actual_sparsity:.1%} sparsity")
-    print(f"[SparseGPT] Effective size: {pruned_size:.1f} GB")
+    print(f"[Pruning] Achieved {actual_sparsity:.1%} sparsity")
+    print(f"[Pruning] Effective size: {pruned_size:.1f} GB")
 
     return {
         "checkpoint_path": output_dir,
         "sparsity": actual_sparsity,
+        "actual_sparsity": actual_sparsity,
         "model_size_gb": pruned_size,
+        "compression_ratio": 1.0 / (1.0 - actual_sparsity) if actual_sparsity < 1.0 else 1.0,
         "pruning_time_sec": pruning_time,
         "pruning_schedule": pruning_schedule,
         "granularity": granularity,
@@ -265,6 +336,164 @@ def prune_model_unstructured(
             "timestamp": datetime.now().isoformat(),
         },
     }
+
+
+@tool
+def estimate_pruning_speedup(
+    model_path: str,
+    sparsity: float = 0.3,
+    method: str = "magnitude",
+) -> Dict[str, float]:
+    """Estimate speedup and compression from pruning without actually pruning.
+
+    Args:
+        model_path: Path to the model checkpoint or HuggingFace model name
+        sparsity: Target sparsity ratio (0.0 - 1.0)
+        method: Pruning method ('magnitude' or 'structured')
+
+    Returns:
+        Dictionary with estimates:
+        - original_size_gb: Original model size
+        - estimated_size_gb: Estimated size after pruning
+        - estimated_compression_ratio: Expected compression ratio
+        - estimated_speedup: Expected inference speedup factor
+    """
+    estimates = estimate_pruning_benefits(model_path, sparsity, method)
+
+    print(f"[Pruning Estimate] Original size: {estimates['original_size_gb']:.1f} GB")
+    print(f"[Pruning Estimate] Estimated size after {method} pruning: {estimates['estimated_size_gb']:.1f} GB")
+    print(f"[Pruning Estimate] Estimated speedup: {estimates['estimated_speedup']:.2f}x")
+
+    return estimates
+
+
+@tool
+def validate_pruning_compatibility(
+    model_path: str,
+    method: str,
+    sparsity: float = 0.3,
+    granularity: str = "weight",
+) -> Dict[str, Any]:
+    """Check if a model is compatible with the specified pruning method.
+
+    Args:
+        model_path: Path to the model checkpoint or HuggingFace model name
+        method: Pruning method to validate ('magnitude' or 'structured')
+        sparsity: Target sparsity ratio
+        granularity: Pruning granularity for structured pruning
+
+    Returns:
+        Dictionary with validation results:
+        - is_compatible: Whether the method is compatible
+        - warnings: List of warnings
+        - recommendations: List of recommendations
+    """
+    warnings = []
+    recommendations = []
+    is_compatible = True
+
+    model_name_lower = model_path.lower()
+
+    # Validate sparsity
+    if sparsity < 0.0 or sparsity > 0.99:
+        is_compatible = False
+        warnings.append(f"Sparsity must be between 0.0 and 0.99, got {sparsity}")
+
+    if sparsity > 0.7:
+        warnings.append(f"High sparsity ({sparsity*100:.0f}%) may cause significant accuracy loss")
+        recommendations.append("Consider starting with 30-50% sparsity")
+
+    if sparsity < 0.1:
+        warnings.append(f"Low sparsity ({sparsity*100:.0f}%) provides minimal compression benefit")
+        recommendations.append("Consider 30% or higher sparsity for meaningful compression")
+
+    # Method-specific checks
+    if method.lower() == "magnitude":
+        recommendations.append("Magnitude pruning is simple but doesn't reduce storage without sparse format")
+        if sparsity > 0.5:
+            warnings.append("High magnitude pruning may significantly impact model quality")
+
+    elif method.lower() == "structured":
+        if granularity == "head":
+            # Check if model likely has attention heads
+            if not any(arch in model_name_lower for arch in ['llama', 'gpt', 'bert', 'mistral', 'falcon', 'phi']):
+                warnings.append("Attention head pruning works best with transformer models")
+            recommendations.append("Head pruning provides good speedup for transformer models")
+
+        elif granularity == "channel":
+            recommendations.append("Channel pruning provides actual size reduction and speedup")
+
+    # Model-specific recommendations
+    if "llama" in model_name_lower:
+        recommendations.append("Llama models respond well to structured head pruning")
+    elif "gpt2" in model_name_lower:
+        recommendations.append("GPT-2 is a good test model for pruning experiments")
+    elif "phi" in model_name_lower:
+        recommendations.append("Phi models are already efficient; prune conservatively")
+
+    return {
+        "is_compatible": is_compatible,
+        "warnings": warnings,
+        "recommendations": recommendations,
+        "method": method,
+        "sparsity": sparsity,
+        "granularity": granularity,
+    }
+
+
+@tool
+def list_available_pruning_methods() -> List[Dict[str, Any]]:
+    """List all available pruning methods with their characteristics.
+
+    Returns:
+        List of dictionaries describing each method
+    """
+    methods = [
+        {
+            "name": "magnitude",
+            "description": "Unstructured pruning based on weight magnitude",
+            "granularities": ["weight"],
+            "supported_sparsity": [0.1, 0.3, 0.5, 0.7, 0.9],
+            "pros": [
+                "Simple and fast to apply",
+                "Works with any model architecture",
+                "Fine-grained control over sparsity",
+            ],
+            "cons": [
+                "Requires sparse format for storage savings",
+                "Limited speedup without hardware support",
+                "May require fine-tuning to recover accuracy",
+            ],
+            "recommended_for": [
+                "Initial pruning experiments",
+                "Models with redundant weights",
+                "When combined with sparse inference libraries",
+            ],
+        },
+        {
+            "name": "structured",
+            "description": "Remove entire channels or attention heads",
+            "granularities": ["channel", "head"],
+            "supported_sparsity": [0.1, 0.2, 0.3, 0.5],
+            "pros": [
+                "Actual model size reduction",
+                "Real inference speedup",
+                "No special hardware/libraries needed",
+            ],
+            "cons": [
+                "More aggressive - may impact accuracy more",
+                "Granularity is coarser than magnitude pruning",
+                "May not work well with all architectures",
+            ],
+            "recommended_for": [
+                "Production deployment",
+                "When real speedup is required",
+                "Transformer models (head pruning)",
+            ],
+        },
+    ]
+
+    return methods
 
 
 @tool
@@ -294,8 +523,9 @@ def analyze_layer_importance(
             checkpoint_path,
             torch_dtype=torch.float16,
             device_map="auto",
+            trust_remote_code=True,
         )
-        tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
+        tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, trust_remote_code=True)
 
         # Calculate importance scores
         layer_scores = {}
@@ -381,7 +611,7 @@ def create_pruning_schedule(
     ]
 
     print(f"[Schedule] Created {schedule_type} pruning schedule with {num_steps} steps")
-    print(f"[Schedule] Sparsity: {initial_sparsity:.0%} → {target_sparsity:.0%}")
+    print(f"[Schedule] Sparsity: {initial_sparsity:.0%} -> {target_sparsity:.0%}")
 
     return {
         "schedule_type": schedule_type,
@@ -439,15 +669,19 @@ Model: {model_name}
 Model Size: {model_size:.1f} GB
 
 Your responsibilities:
-1. Apply structured pruning (remove channels/heads)
-2. Apply unstructured pruning (weight sparsification)
+1. Apply magnitude pruning (unstructured weight sparsification)
+2. Apply structured pruning (remove channels/heads)
 3. Analyze layer importance for intelligent pruning
 4. Create pruning schedules for gradual sparsification
 5. Balance sparsity with accuracy retention
 
 Available tools:
+- prune_model: Main entry point for pruning (supports both methods)
 - prune_model_structured: Remove entire channels/heads
 - prune_model_unstructured: Sparsify individual weights
+- estimate_pruning_speedup: Estimate benefits without pruning
+- validate_pruning_compatibility: Check compatibility
+- list_available_pruning_methods: Get method information
 - analyze_layer_importance: Identify which layers to prune
 - create_pruning_schedule: Design gradual pruning plan
 
@@ -464,9 +698,9 @@ Guidelines:
 - Aggressive: 60-80% sparsity, requires fine-tuning
 
 When you receive a pruning request:
-1. Analyze layer importance first
-2. Choose structured vs unstructured based on goals
-3. Create appropriate pruning schedule
+1. Validate compatibility first
+2. Analyze layer importance if time permits
+3. Choose structured vs unstructured based on goals
 4. Execute pruning
 5. Report sparsity and size reduction
 """
@@ -476,8 +710,12 @@ When you receive a pruning request:
         "description": "Applies structured and unstructured pruning for model compression",
         "prompt": prompt,
         "tools": [
+            prune_model,
             prune_model_structured,
             prune_model_unstructured,
+            estimate_pruning_speedup,
+            validate_pruning_compatibility,
+            list_available_pruning_methods,
             analyze_layer_importance,
             create_pruning_schedule,
         ],
@@ -485,4 +723,14 @@ When you receive a pruning request:
     }
 
 
-__all__ = ["get_pruning_subagent", "prune_model_structured", "prune_model_unstructured"]
+__all__ = [
+    "prune_model",
+    "prune_model_structured",
+    "prune_model_unstructured",
+    "estimate_pruning_speedup",
+    "validate_pruning_compatibility",
+    "list_available_pruning_methods",
+    "analyze_layer_importance",
+    "create_pruning_schedule",
+    "get_pruning_subagent",
+]

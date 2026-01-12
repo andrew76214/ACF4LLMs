@@ -105,85 +105,131 @@ def evolutionary_search(
     crossover_rate: float = 0.7,
     search_space: Dict[str, Any] = None,
     fitness_history: Optional[List[Dict]] = None,
+    fitness_weights: Optional[Dict[str, float]] = None,
+    current_generation: int = 0,
 ) -> Dict[str, Any]:
     """Perform evolutionary search for strategy optimization.
 
+    This function supports iterative evolution with real fitness values from
+    external evaluation. Each call can advance one or more generations.
+
+    The fitness_history should contain entries with either:
+    - "fitness": Pre-computed fitness value, OR
+    - "result": Evaluation result dict with accuracy, latency_ms, memory_gb
+      (fitness will be computed automatically using _compute_fitness)
+
     Args:
         population_size: Size of population
-        num_generations: Number of generations
-        mutation_rate: Mutation probability
-        crossover_rate: Crossover probability
-        search_space: Parameter search space
-        fitness_history: Previous fitness evaluations
+        num_generations: Number of generations to evolve
+        mutation_rate: Mutation probability per individual
+        crossover_rate: Crossover probability between parents
+        search_space: Parameter search space definition
+        fitness_history: Previous evaluations with fitness or results.
+            Each entry should have "parameters" and either "fitness" or "result".
+        fitness_weights: Optional weights for multi-objective fitness.
+            Keys: "accuracy" (default 1.0), "latency" (default 0.3), "memory" (default 0.2)
+        current_generation: Current generation number for multi-call evolution
 
     Returns:
-        Dictionary with evolved strategies
+        Dictionary with:
+        - search_method: "evolutionary"
+        - best_individual: Best parameter configuration found
+        - best_fitness: Best fitness score
+        - candidates_to_evaluate: New individuals needing evaluation
+        - final_population: Current population after evolution
+        - current_generation: Generation number after this call
+        - is_complete: Whether evolution is complete (all generations done)
     """
-    print(f"[Evolution] Running evolutionary search for {num_generations} generations")
+    print(f"[Evolution] Running evolutionary search (gen {current_generation + 1}-{current_generation + num_generations})")
 
     if not search_space:
         search_space = _get_default_compression_search_space()
 
-    # Initialize population
+    # Compute fitness from results if not already provided
+    if fitness_history:
+        for h in fitness_history:
+            if "fitness" not in h and "result" in h:
+                h["fitness"] = _compute_fitness(h["result"], fitness_weights)
+            elif "fitness" not in h:
+                # No fitness and no result - assign neutral fitness
+                h["fitness"] = 0.5
+
+    # Initialize population from history or randomly
     if fitness_history and len(fitness_history) >= population_size:
-        # Use history as initial population
-        population = [h["parameters"] for h in fitness_history[-population_size:]]
-        fitness = [h["fitness"] for h in fitness_history[-population_size:]]
+        # Use most recent history entries as initial population
+        recent_history = fitness_history[-population_size:]
+        population = [h["parameters"] for h in recent_history]
+        fitness = [h["fitness"] for h in recent_history]
+        has_real_fitness = True
+    elif fitness_history and len(fitness_history) > 0:
+        # Partial history - use what we have and fill with random
+        population = [h["parameters"] for h in fitness_history]
+        fitness = [h["fitness"] for h in fitness_history]
+        # Fill remaining with random individuals
+        while len(population) < population_size:
+            population.append(_sample_params_dict(search_space))
+            fitness.append(0.5)  # Neutral fitness for unevaluated
+        has_real_fitness = True
     else:
-        # Random initialization
+        # No history - generate initial population for evaluation
         population = [_sample_params_dict(search_space) for _ in range(population_size)]
-        fitness = [random.random() for _ in range(population_size)]  # Mock fitness
+        print(f"[Evolution] Generated initial population of {population_size} candidates")
+        return {
+            "search_method": "evolutionary",
+            "best_individual": population[0],
+            "best_fitness": 0.0,
+            "candidates_to_evaluate": population,
+            "final_population": population,
+            "current_generation": 0,
+            "is_complete": False,
+            "message": "Initial population generated. Please evaluate and provide fitness_history.",
+        }
 
     best_individual = population[np.argmax(fitness)]
     best_fitness = max(fitness)
 
-    # Evolution loop (simplified for demonstration)
+    print(f"[Evolution] Starting with best fitness: {best_fitness:.3f}")
+
+    # Evolution loop
     for gen in range(num_generations):
-        # Selection (tournament)
-        new_population = []
+        # Evolve one generation using helper function
+        population = _evolve_one_generation(
+            population=population,
+            fitness=fitness,
+            search_space=search_space,
+            crossover_rate=crossover_rate,
+            mutation_rate=mutation_rate,
+        )
 
-        for _ in range(population_size):
-            # Tournament selection
-            tournament_size = 3
-            tournament_indices = random.sample(range(len(population)), tournament_size)
-            tournament_fitness = [fitness[i] for i in tournament_indices]
-            winner_idx = tournament_indices[np.argmax(tournament_fitness)]
-            new_population.append(population[winner_idx].copy())
+        # For multi-generation evolution within one call, we need fitness
+        # for intermediate generations. Use the last known fitness as proxy
+        # since actual fitness requires external evaluation.
+        # The final candidates will be returned for real evaluation.
+        if gen < num_generations - 1:
+            # Intermediate generation - estimate fitness from similarity to best
+            # This is a heuristic; real fitness comes from external evaluation
+            fitness = []
+            for ind in population:
+                # Similarity-based proxy fitness
+                similarity = sum(
+                    1 for k in ind if k in best_individual and ind[k] == best_individual[k]
+                ) / max(len(ind), 1)
+                fitness.append(best_fitness * (0.8 + 0.2 * similarity))
 
-        # Crossover
-        for i in range(0, population_size - 1, 2):
-            if random.random() < crossover_rate:
-                # Simple crossover
-                for param in search_space:
-                    if random.random() < 0.5:
-                        new_population[i][param], new_population[i+1][param] = \
-                            new_population[i+1][param], new_population[i][param]
+    final_generation = current_generation + num_generations
 
-        # Mutation
-        for individual in new_population:
-            if random.random() < mutation_rate:
-                param_to_mutate = random.choice(list(search_space.keys()))
-                individual[param_to_mutate] = _sample_param_value(search_space[param_to_mutate])
-
-        population = new_population
-        # Mock fitness evaluation
-        fitness = [random.random() for _ in range(population_size)]
-
-        # Track best
-        gen_best_idx = np.argmax(fitness)
-        if fitness[gen_best_idx] > best_fitness:
-            best_fitness = fitness[gen_best_idx]
-            best_individual = population[gen_best_idx]
-
-    print(f"[Evolution] Best fitness: {best_fitness:.3f}")
+    print(f"[Evolution] Completed generation {final_generation}")
+    print(f"[Evolution] Best fitness so far: {best_fitness:.3f}")
 
     return {
         "search_method": "evolutionary",
         "best_individual": best_individual,
         "best_fitness": best_fitness,
+        "candidates_to_evaluate": population,
         "final_population": population,
         "population_size": population_size,
-        "num_generations": num_generations,
+        "current_generation": final_generation,
+        "is_complete": final_generation >= num_generations,
     }
 
 
@@ -552,6 +598,101 @@ def _apply_constraints(params: Dict, constraints: Dict) -> Dict:
                 # This is simplified; in practice, would need proper handling
                 pass
     return params
+
+
+def _compute_fitness(
+    result: Dict[str, Any],
+    weights: Optional[Dict[str, float]] = None
+) -> float:
+    """Compute weighted fitness score from evaluation result.
+
+    Combines multiple objectives (accuracy, latency, memory) into a single
+    scalar fitness value for evolutionary optimization.
+
+    Args:
+        result: Evaluation result dictionary with keys like:
+            - accuracy or average_accuracy: Model accuracy (0-1, higher is better)
+            - latency_ms: Inference latency in milliseconds (lower is better)
+            - memory_gb: Memory usage in GB (lower is better)
+        weights: Optional weight dict with keys "accuracy", "latency", "memory".
+            Defaults to {"accuracy": 1.0, "latency": 0.3, "memory": 0.2}
+
+    Returns:
+        Fitness score (higher is better), typically in range 0-1.5
+    """
+    if weights is None:
+        weights = {
+            "accuracy": 1.0,
+            "latency": 0.3,
+            "memory": 0.2,
+        }
+
+    # Extract metrics with sensible defaults
+    accuracy = result.get("accuracy", result.get("average_accuracy", 0.5))
+    latency_ms = result.get("latency_ms", 100.0)
+    memory_gb = result.get("memory_gb", 8.0)
+
+    # Normalize: accuracy already 0-1
+    # For latency and memory, lower is better, so we invert
+    # Using sigmoid-like transformation for bounded output
+    latency_score = 1.0 / (1.0 + latency_ms / 100.0)  # 100ms -> 0.5, 50ms -> 0.67
+    memory_score = 1.0 / (1.0 + memory_gb / 8.0)      # 8GB -> 0.5, 4GB -> 0.67
+
+    fitness = (
+        weights.get("accuracy", 1.0) * accuracy +
+        weights.get("latency", 0.3) * latency_score +
+        weights.get("memory", 0.2) * memory_score
+    )
+
+    return fitness
+
+
+def _evolve_one_generation(
+    population: List[Dict],
+    fitness: List[float],
+    search_space: Dict[str, Any],
+    crossover_rate: float = 0.7,
+    mutation_rate: float = 0.1,
+) -> List[Dict]:
+    """Perform one generation of evolution (selection, crossover, mutation).
+
+    Args:
+        population: Current population of parameter dictionaries
+        fitness: Fitness scores for each individual
+        search_space: Parameter search space definition
+        crossover_rate: Probability of crossover between parents
+        mutation_rate: Probability of mutation per individual
+
+    Returns:
+        New population after evolution
+    """
+    population_size = len(population)
+    new_population = []
+
+    # Tournament selection
+    for _ in range(population_size):
+        tournament_size = min(3, population_size)
+        tournament_indices = random.sample(range(population_size), tournament_size)
+        tournament_fitness = [fitness[i] for i in tournament_indices]
+        winner_idx = tournament_indices[np.argmax(tournament_fitness)]
+        new_population.append(population[winner_idx].copy())
+
+    # Crossover
+    for i in range(0, population_size - 1, 2):
+        if random.random() < crossover_rate:
+            for param in search_space:
+                if param in new_population[i] and param in new_population[i + 1]:
+                    if random.random() < 0.5:
+                        new_population[i][param], new_population[i + 1][param] = \
+                            new_population[i + 1][param], new_population[i][param]
+
+    # Mutation
+    for individual in new_population:
+        if random.random() < mutation_rate:
+            param_to_mutate = random.choice(list(search_space.keys()))
+            individual[param_to_mutate] = _sample_param_value(search_space[param_to_mutate])
+
+    return new_population
 
 
 def get_search_subagent(spec: Dict[str, Any]) -> Dict[str, Any]:

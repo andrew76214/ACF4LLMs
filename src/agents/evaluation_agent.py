@@ -4,16 +4,100 @@ import json
 import os
 import time
 import random
+import logging
 from typing import Dict, Optional, Any, List
 from datetime import datetime
 from pathlib import Path
 from langchain_core.tools import tool
+import torch
 
 from src.common.schemas import Benchmark
 
+logger = logging.getLogger(__name__)
 
-# Mock evaluation functions for MVP
-# In production, these would use actual benchmark libraries
+# Global runners (lazy initialization)
+_benchmark_runner = None
+_latency_evaluator = None
+
+
+def _get_benchmark_runner(device: str = "cuda"):
+    """Get or create the benchmark runner instance."""
+    global _benchmark_runner
+    if _benchmark_runner is None:
+        try:
+            from src.evaluation.benchmark_runner import create_benchmark_runner
+            _benchmark_runner = create_benchmark_runner(device)
+            logger.info("Initialized real BenchmarkRunner")
+        except Exception as e:
+            logger.warning(f"Failed to initialize BenchmarkRunner: {e}")
+            return None
+    return _benchmark_runner
+
+
+def _get_latency_evaluator(device: str = "cuda"):
+    """Get or create the latency evaluator instance."""
+    global _latency_evaluator
+    if _latency_evaluator is None:
+        try:
+            from src.evaluation.evaluators.latency_evaluator import LatencyEvaluator
+            _latency_evaluator = LatencyEvaluator(device=device)
+            logger.info("Initialized real LatencyEvaluator")
+        except Exception as e:
+            logger.warning(f"Failed to initialize LatencyEvaluator: {e}")
+            return None
+    return _latency_evaluator
+
+
+def _load_model_and_tokenizer(checkpoint_path: str, device: str = "cuda"):
+    """Load model and tokenizer from checkpoint."""
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    model = AutoModelForCausalLM.from_pretrained(
+        checkpoint_path,
+        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        device_map="auto" if device == "cuda" else None,
+        trust_remote_code=True,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, trust_remote_code=True)
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model.eval()
+    return model, tokenizer
+
+
+def _mock_evaluate_model(benchmarks: List[str], use_proxy: bool, device: str) -> Dict[str, Any]:
+    """Fallback mock evaluation when real evaluation fails."""
+    benchmark_scores = {}
+    base_accuracy = 0.85 if use_proxy else 0.87
+
+    for benchmark in benchmarks:
+        if benchmark.lower() == "gsm8k":
+            score = base_accuracy - random.uniform(0.05, 0.10)
+        elif benchmark.lower() == "humaneval":
+            score = base_accuracy - random.uniform(0.10, 0.20)
+        elif benchmark.lower() in ["commonsenseqa", "commonsense_qa"]:
+            score = base_accuracy + random.uniform(-0.05, 0.05)
+        elif benchmark.lower() in ["truthfulqa", "truthful_qa"]:
+            score = base_accuracy - random.uniform(0.02, 0.08)
+        elif benchmark.lower() in ["bigbench_hard", "bigbench"]:
+            score = base_accuracy - random.uniform(0.10, 0.15)
+        else:
+            score = base_accuracy + random.uniform(-0.05, 0.05)
+        benchmark_scores[benchmark] = max(0.0, min(1.0, score))
+
+    average_accuracy = sum(benchmark_scores.values()) / len(benchmark_scores) if benchmark_scores else 0.0
+    latency_ms = random.uniform(80, 150) if "cuda" in device else random.uniform(200, 400)
+
+    return {
+        "benchmark_scores": benchmark_scores,
+        "average_accuracy": average_accuracy,
+        "latency_ms": latency_ms,
+        "throughput_tokens_per_sec": 1000 / latency_ms * 8,
+        "memory_gb": random.uniform(4.0, 8.0),
+        "is_mock": True,
+    }
 
 @tool
 def evaluate_model(
@@ -26,9 +110,21 @@ def evaluate_model(
 ) -> Dict[str, Any]:
     """Evaluate a model checkpoint on specified benchmarks.
 
+    Uses EleutherAI's lm-eval harness for standardized evaluation.
+
     Args:
         checkpoint_path: Path to the model checkpoint
-        benchmarks: List of benchmark names to run
+        benchmarks: List of benchmark names to run. Available benchmarks:
+            - gsm8k: Mathematical reasoning
+            - commonsenseqa: Common sense reasoning
+            - truthfulqa: Truthfulness and factuality
+            - humaneval: Code generation (custom evaluator)
+            - bigbench_hard: Challenging diverse tasks (BBH)
+            - mmlu: Massive Multitask Language Understanding
+            - hellaswag: Commonsense NLI
+            - arc_easy: AI2 Reasoning Challenge (Easy)
+            - arc_challenge: AI2 Reasoning Challenge (Challenge)
+            - winogrande: Winograd Schema Challenge
         use_proxy: Whether to use proxy evaluation (faster but less accurate)
         proxy_samples: Number of samples for proxy evaluation
         device: Device to run evaluation on ('cuda' or 'cpu')
@@ -49,63 +145,58 @@ def evaluate_model(
 
     start_time = time.time()
 
-    # Mock evaluation scores
-    # In production, these would be actual benchmark results
-    benchmark_scores = {}
+    # Try to use real BenchmarkRunner
+    runner = _get_benchmark_runner(device)
 
-    for benchmark in benchmarks:
-        # Simulate evaluation time
-        eval_time = 0.5 if use_proxy else 2.0
-        time.sleep(eval_time)
+    if runner is not None:
+        try:
+            logger.info(f"Running real evaluation on {checkpoint_path}")
+            results = runner.run_full_evaluation(
+                checkpoint_path=checkpoint_path,
+                benchmarks=benchmarks,
+                use_proxy=use_proxy,
+                proxy_samples=proxy_samples,
+                batch_size=batch_size,
+                save_results=True,
+            )
 
-        # Generate mock scores based on benchmark type
-        # Add some randomness but keep it realistic
-        base_accuracy = 0.85 if use_proxy else 0.87
+            evaluation_time = time.time() - start_time
 
-        if benchmark.lower() == "gsm8k":
-            # Math reasoning typically lower accuracy
-            score = base_accuracy - random.uniform(0.05, 0.10)
-        elif benchmark.lower() == "humaneval":
-            # Code generation can vary widely
-            score = base_accuracy - random.uniform(0.10, 0.20)
-        elif benchmark.lower() in ["commonsenseqa", "commonsense_qa"]:
-            # Common sense is usually robust
-            score = base_accuracy + random.uniform(-0.05, 0.05)
-        elif benchmark.lower() in ["truthfulqa", "truthful_qa"]:
-            # Truthfulness benchmark
-            score = base_accuracy - random.uniform(0.02, 0.08)
-        elif benchmark.lower() in ["bigbench_hard", "bigbench"]:
-            # Challenging benchmark
-            score = base_accuracy - random.uniform(0.10, 0.15)
-        else:
-            # Default score
-            score = base_accuracy + random.uniform(-0.05, 0.05)
+            print(f"[Evaluation] Completed in {evaluation_time:.1f} seconds")
+            print(f"[Evaluation] Average accuracy: {results['average_accuracy']:.3f}")
+            print(f"[Evaluation] Latency: {results['latency_ms']:.1f} ms")
 
-        benchmark_scores[benchmark] = max(0.0, min(1.0, score))  # Clamp to [0, 1]
-        print(f"[Evaluation] {benchmark}: {benchmark_scores[benchmark]:.3f}")
+            return {
+                "benchmark_scores": results.get("benchmark_scores", {}),
+                "average_accuracy": results.get("average_accuracy", 0.0),
+                "latency_ms": results.get("latency_ms", 0.0),
+                "throughput_tokens_per_sec": results.get("throughput_tokens_per_sec", 0.0),
+                "memory_gb": results.get("memory_gb", 0.0),
+                "evaluation_time_sec": evaluation_time,
+                "is_proxy": use_proxy,
+                "proxy_samples": proxy_samples if use_proxy else None,
+                "device": device,
+                "batch_size": batch_size,
+                "is_mock": False,
+            }
 
-    # Calculate average accuracy
-    average_accuracy = sum(benchmark_scores.values()) / len(benchmark_scores) if benchmark_scores else 0.0
+        except Exception as e:
+            logger.warning(f"Real evaluation failed: {e}, falling back to mock")
+            print(f"[Evaluation] Real evaluation failed: {e}, using mock fallback")
 
-    # Mock performance metrics
-    # These would be measured during actual inference
-    latency_ms = random.uniform(80, 150) if "cuda" in device else random.uniform(200, 400)
-    throughput = 1000 / latency_ms * batch_size  # tokens/sec
-    memory_gb = random.uniform(4.0, 8.0)
-
+    # Fallback to mock evaluation
+    print("[Evaluation] Using mock evaluation (real evaluation unavailable)")
+    mock_results = _mock_evaluate_model(benchmarks, use_proxy, device)
     evaluation_time = time.time() - start_time
 
+    for benchmark, score in mock_results["benchmark_scores"].items():
+        print(f"[Evaluation] {benchmark}: {score:.3f}")
+
     print(f"[Evaluation] Completed in {evaluation_time:.1f} seconds")
-    print(f"[Evaluation] Average accuracy: {average_accuracy:.3f}")
-    print(f"[Evaluation] Latency: {latency_ms:.1f} ms")
-    print(f"[Evaluation] Throughput: {throughput:.1f} tokens/sec")
+    print(f"[Evaluation] Average accuracy: {mock_results['average_accuracy']:.3f}")
 
     return {
-        "benchmark_scores": benchmark_scores,
-        "average_accuracy": average_accuracy,
-        "latency_ms": latency_ms,
-        "throughput_tokens_per_sec": throughput,
-        "memory_gb": memory_gb,
+        **mock_results,
         "evaluation_time_sec": evaluation_time,
         "is_proxy": use_proxy,
         "proxy_samples": proxy_samples if use_proxy else None,
@@ -184,20 +275,62 @@ def measure_inference_latency(
     """
     print(f"[Latency] Measuring latency over {num_runs} runs...")
 
-    # Mock latency measurements
-    # In production, this would actually load and run the model
+    # Try to use real LatencyEvaluator
+    latency_evaluator = _get_latency_evaluator(device)
+
+    if latency_evaluator is not None:
+        try:
+            logger.info(f"Running real latency measurement on {checkpoint_path}")
+
+            # Load model and tokenizer
+            model, tokenizer = _load_model_and_tokenizer(checkpoint_path, device)
+
+            # Use real LatencyEvaluator
+            results = latency_evaluator.evaluate_performance(
+                model=model,
+                tokenizer=tokenizer,
+                batch_size=1,
+                sequence_length=input_length,
+                num_iterations=num_runs,
+            )
+
+            # Clean up
+            del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            print(f"[Latency] Mean: {results['mean_latency_ms']:.1f} ms (±{results['std_latency_ms']:.1f} ms)")
+            print(f"[Latency] Throughput: {results['throughput_tokens_per_sec']:.1f} tokens/sec")
+
+            return {
+                "mean_latency_ms": results["mean_latency_ms"],
+                "std_latency_ms": results["std_latency_ms"],
+                "min_latency_ms": results["min_latency_ms"],
+                "max_latency_ms": results["max_latency_ms"],
+                "p50_latency_ms": results.get("p50_latency_ms", results["mean_latency_ms"]),
+                "p90_latency_ms": results.get("p90_latency_ms", results["max_latency_ms"]),
+                "p99_latency_ms": results.get("p99_latency_ms", results["max_latency_ms"]),
+                "tokens_per_second": results["throughput_tokens_per_sec"],
+                "num_runs": num_runs,
+                "device": device,
+                "is_mock": False,
+            }
+
+        except Exception as e:
+            logger.warning(f"Real latency measurement failed: {e}, falling back to mock")
+            print(f"[Latency] Real measurement failed: {e}, using mock fallback")
+
+    # Fallback to mock latency measurements
+    print("[Latency] Using mock measurement (real measurement unavailable)")
     latencies = []
 
     for i in range(num_runs):
-        # Simulate variance in latency
         base_latency = 100 if "cuda" in device else 250
         latency = base_latency + random.uniform(-20, 30)
         latencies.append(latency)
-        time.sleep(0.1)  # Mock inference time
 
     mean_latency = sum(latencies) / len(latencies)
     std_latency = (sum((x - mean_latency) ** 2 for x in latencies) / len(latencies)) ** 0.5
-
     tokens_per_second = (input_length + output_length) / (mean_latency / 1000)
 
     print(f"[Latency] Mean: {mean_latency:.1f} ms (±{std_latency:.1f} ms)")
@@ -211,6 +344,7 @@ def measure_inference_latency(
         "tokens_per_second": tokens_per_second,
         "num_runs": num_runs,
         "device": device,
+        "is_mock": True,
     }
 
 
@@ -237,10 +371,73 @@ def measure_memory_usage(
     """
     print(f"[Memory] Measuring memory usage...")
 
-    # Mock memory measurements
-    # In production, this would use actual GPU memory tracking
+    # Try to use real LatencyEvaluator for memory measurement
+    latency_evaluator = _get_latency_evaluator(device)
 
-    # Estimate based on checkpoint path (mock)
+    if latency_evaluator is not None:
+        try:
+            logger.info(f"Running real memory measurement on {checkpoint_path}")
+
+            # Load model and tokenizer
+            model, tokenizer = _load_model_and_tokenizer(checkpoint_path, device)
+
+            # Measure model size
+            size_results = latency_evaluator.measure_model_size(model)
+            model_size_gb = size_results["model_size_gb"]
+
+            # Profile memory usage with inference
+            if device == "cuda" and torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
+
+                # Run inference to measure peak memory
+                dummy_text = "Test input " * (sequence_length // 10)
+                inputs = tokenizer(
+                    [dummy_text] * batch_size,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=sequence_length,
+                )
+                inputs = {k: v.cuda() for k, v in inputs.items()}
+
+                with torch.no_grad():
+                    _ = model.generate(**inputs, max_new_tokens=50)
+
+                peak_memory_gb = torch.cuda.max_memory_allocated() / (1024**3)
+            else:
+                import psutil
+                peak_memory_gb = psutil.Process().memory_info().rss / (1024**3)
+
+            inference_memory_gb = peak_memory_gb - model_size_gb
+
+            # Clean up
+            del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            print(f"[Memory] Model size: {model_size_gb:.1f} GB")
+            print(f"[Memory] Peak usage: {peak_memory_gb:.1f} GB")
+            print(f"[Memory] Inference overhead: {inference_memory_gb:.1f} GB")
+
+            return {
+                "model_size_gb": model_size_gb,
+                "peak_memory_gb": peak_memory_gb,
+                "inference_memory_gb": inference_memory_gb,
+                "total_parameters": size_results.get("total_parameters", 0),
+                "parameters_millions": size_results.get("parameters_millions", 0),
+                "batch_size": batch_size,
+                "sequence_length": sequence_length,
+                "device": device,
+                "is_mock": False,
+            }
+
+        except Exception as e:
+            logger.warning(f"Real memory measurement failed: {e}, falling back to mock")
+            print(f"[Memory] Real measurement failed: {e}, using mock fallback")
+
+    # Fallback to mock memory measurements
+    print("[Memory] Using mock measurement (real measurement unavailable)")
+
     if "4bit" in checkpoint_path:
         model_size_gb = 4.0
     elif "8bit" in checkpoint_path:
@@ -248,7 +445,6 @@ def measure_memory_usage(
     else:
         model_size_gb = 16.0
 
-    # Inference typically needs 20-50% more memory
     overhead_factor = 1.3 + (batch_size * 0.1)
     peak_memory_gb = model_size_gb * overhead_factor
     inference_memory_gb = peak_memory_gb - model_size_gb
@@ -264,6 +460,7 @@ def measure_memory_usage(
         "batch_size": batch_size,
         "sequence_length": sequence_length,
         "device": device,
+        "is_mock": True,
     }
 
 
@@ -324,6 +521,37 @@ def compare_with_baseline(
     }
 
 
+def _mock_energy_consumption(
+    checkpoint_path: str,
+    num_inferences: int,
+    device: str,
+) -> Dict[str, float]:
+    """Fallback mock energy estimation."""
+    if "cuda" in device:
+        if "4bit" in checkpoint_path:
+            energy_per_inference = 0.5
+        elif "8bit" in checkpoint_path:
+            energy_per_inference = 1.0
+        else:
+            energy_per_inference = 2.0
+    else:
+        energy_per_inference = 0.3
+
+    total_energy = energy_per_inference * num_inferences
+    co2_grams = (total_energy / 3600000) * 500
+
+    return {
+        "energy_per_inference_joules": energy_per_inference,
+        "total_energy_joules": total_energy,
+        "energy_kwh": total_energy / 3600000,
+        "co2_grams": co2_grams,
+        "co2_kg": co2_grams / 1000,
+        "num_inferences": num_inferences,
+        "device": device,
+        "is_mock": True,
+    }
+
+
 @tool
 def estimate_energy_consumption(
     checkpoint_path: str,
@@ -343,39 +571,83 @@ def estimate_energy_consumption(
         - total_energy_joules: Total energy for num_inferences
         - co2_grams: Estimated CO2 emissions
     """
-    print(f"[Energy] Estimating energy consumption...")
+    print(f"[Energy] Estimating energy consumption for {num_inferences} inferences...")
 
-    # Mock energy estimation
-    # In production, this would use actual power measurement or models
+    # Try to use codecarbon for real energy tracking
+    try:
+        from codecarbon import EmissionsTracker
 
-    if "cuda" in device:
-        # GPU inference energy (rough estimates)
-        if "4bit" in checkpoint_path:
-            energy_per_inference = 0.5  # Joules
-        elif "8bit" in checkpoint_path:
-            energy_per_inference = 1.0
-        else:
-            energy_per_inference = 2.0
-    else:
-        # CPU inference (typically more energy-efficient per inference)
-        energy_per_inference = 0.3
+        logger.info(f"Using codecarbon for real energy tracking")
 
-    total_energy = energy_per_inference * num_inferences
+        # Load model and tokenizer
+        model, tokenizer = _load_model_and_tokenizer(checkpoint_path, device)
 
-    # Rough CO2 estimate (0.5 kg CO2 per kWh)
-    co2_grams = (total_energy / 3600000) * 500  # Convert J to kWh, then to grams CO2
+        # Start tracking emissions
+        tracker = EmissionsTracker(
+            log_level="error",
+            save_to_file=False,
+            save_to_api=False,
+        )
+        tracker.start()
 
-    print(f"[Energy] Per inference: {energy_per_inference:.2f} J")
-    print(f"[Energy] Total ({num_inferences} runs): {total_energy:.1f} J")
-    print(f"[Energy] Estimated CO2: {co2_grams:.2f} g")
+        # Run inferences
+        dummy_input = tokenizer("Hello world, this is a test.", return_tensors="pt")
+        if device == "cuda" and torch.cuda.is_available():
+            dummy_input = {k: v.cuda() for k, v in dummy_input.items()}
 
-    return {
-        "energy_per_inference_joules": energy_per_inference,
-        "total_energy_joules": total_energy,
-        "co2_grams": co2_grams,
-        "num_inferences": num_inferences,
-        "device": device,
-    }
+        for i in range(num_inferences):
+            with torch.no_grad():
+                _ = model.generate(**dummy_input, max_new_tokens=10, do_sample=False)
+            if (i + 1) % 100 == 0:
+                print(f"[Energy] Completed {i + 1}/{num_inferences} inferences...")
+
+        # Stop tracking and get results
+        emissions_kg = tracker.stop()
+
+        # Get detailed data
+        final_data = tracker.final_emissions_data
+        energy_kwh = final_data.energy_consumed if final_data else 0.0
+
+        # Convert to various units
+        total_energy_joules = energy_kwh * 3600000  # kWh to Joules
+        energy_per_inference_joules = total_energy_joules / num_inferences
+        co2_grams = emissions_kg * 1000
+
+        # Clean up
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        print(f"[Energy] Total energy: {energy_kwh:.6f} kWh ({total_energy_joules:.1f} J)")
+        print(f"[Energy] Per inference: {energy_per_inference_joules:.4f} J")
+        print(f"[Energy] CO2 emissions: {co2_grams:.4f} g")
+
+        return {
+            "energy_per_inference_joules": energy_per_inference_joules,
+            "total_energy_joules": total_energy_joules,
+            "energy_kwh": energy_kwh,
+            "co2_grams": co2_grams,
+            "co2_kg": emissions_kg,
+            "num_inferences": num_inferences,
+            "device": device,
+            "is_mock": False,
+        }
+
+    except ImportError:
+        logger.warning("codecarbon not available, using mock energy estimation")
+        print("[Energy] codecarbon not available, using mock estimation")
+    except Exception as e:
+        logger.warning(f"Real energy tracking failed: {e}, falling back to mock")
+        print(f"[Energy] Real tracking failed: {e}, using mock estimation")
+
+    # Fallback to mock estimation
+    results = _mock_energy_consumption(checkpoint_path, num_inferences, device)
+
+    print(f"[Energy] Per inference: {results['energy_per_inference_joules']:.2f} J")
+    print(f"[Energy] Total: {results['total_energy_joules']:.1f} J")
+    print(f"[Energy] Estimated CO2: {results['co2_grams']:.2f} g")
+
+    return results
 
 
 def get_evaluation_subagent(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -399,7 +671,7 @@ Primary Objective: {primary_objective}
 Accuracy Threshold: {accuracy_threshold:.0%}
 
 Your responsibilities:
-1. Evaluate models on multiple benchmarks (GSM8K, CommonsenseQA, TruthfulQA, HumanEval, BIG-Bench Hard)
+1. Evaluate models on multiple benchmarks using lm-eval harness
 2. Measure inference latency and throughput
 3. Track memory usage during inference
 4. Estimate energy consumption
@@ -407,7 +679,7 @@ Your responsibilities:
 6. Use proxy evaluation for quick assessment, full evaluation for final results
 
 Available tools:
-- evaluate_model: Run comprehensive evaluation
+- evaluate_model: Run comprehensive evaluation (uses lm-eval harness)
 - run_proxy_evaluation: Quick evaluation with subset of data
 - measure_inference_latency: Detailed latency profiling
 - measure_memory_usage: Memory consumption tracking
@@ -421,12 +693,17 @@ Evaluation Strategy:
 4. Compare with baseline to calculate accuracy retention
 5. Report comprehensive metrics for Pareto optimization
 
-Key Benchmarks:
+Available Benchmarks (via lm-eval harness):
 - GSM8K: Mathematical reasoning
 - CommonsenseQA: Common sense reasoning
 - TruthfulQA: Truthfulness and factuality
-- HumanEval: Code generation
-- BIG-Bench Hard: Challenging diverse tasks
+- HumanEval: Code generation (custom evaluator)
+- BIG-Bench Hard (bbh): Challenging diverse tasks
+- MMLU: Massive Multitask Language Understanding
+- HellaSwag: Commonsense NLI
+- ARC-Easy: AI2 Reasoning Challenge (Easy)
+- ARC-Challenge: AI2 Reasoning Challenge (Challenge)
+- WinoGrande: Winograd Schema Challenge
 
 When you receive an evaluation request:
 1. First run proxy evaluation on all benchmarks

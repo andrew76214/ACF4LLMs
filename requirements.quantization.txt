@@ -4,4 +4,4 @@
 # points to its root (e.g., /usr/local/cuda) before installing.
 auto-round>=0.2.0
 gptqmodel>=1.4.3  # tip: pip install -v gptqmodel --no-build-isolation
-awq>=0.1.0
+autoawq>=0.2.0

@@ -19,12 +19,25 @@ class CompressionMethod(str, Enum):
 
 
 class Benchmark(str, Enum):
-    """Available benchmark datasets."""
+    """Available benchmark datasets.
+
+    Benchmarks are evaluated using EleutherAI's lm-eval harness where possible,
+    with custom evaluators for specialized tasks (e.g., HumanEval code execution).
+    """
+
+    # Core benchmarks (lm-eval)
     GSM8K = "gsm8k"
     COMMONSENSE_QA = "commonsenseqa"
     TRUTHFUL_QA = "truthfulqa"
-    HUMANEVAL = "humaneval"
+    HUMANEVAL = "humaneval"  # Custom evaluator (code execution)
     BIGBENCH_HARD = "bigbench_hard"
+
+    # Additional lm-eval benchmarks
+    MMLU = "mmlu"
+    HELLASWAG = "hellaswag"
+    ARC_EASY = "arc_easy"
+    ARC_CHALLENGE = "arc_challenge"
+    WINOGRANDE = "winogrande"
 
 
 class ModelSpec(BaseModel):
@@ -61,6 +74,8 @@ class CompressionStrategy(BaseModel):
     quantization_bits: Optional[int] = Field(None, description="Bit width for quantization")
     quantization_method: Optional[str] = Field(None, description="Specific quantization method")
     pruning_ratio: Optional[float] = Field(None, description="Pruning sparsity ratio")
+    pruning_method: Optional[str] = Field(None, description="Pruning method: magnitude or structured")
+    pruning_granularity: Optional[str] = Field(None, description="Pruning granularity: weight, channel, or head")
     distillation_teacher: Optional[str] = Field(None, description="Teacher model for distillation")
     lora_rank: Optional[int] = Field(None, description="LoRA rank for fine-tuning")
 

@@ -48,6 +48,12 @@ python run_manual_eval.py --model gpt2 --device cpu --proxy
 
 # Run tests
 python tests/test_basic.py
+
+# Run tests with pytest
+pytest tests/
+
+# Run a single test function
+pytest tests/test_basic.py::test_spec_inference -v
 ```
 
 ## Architecture
@@ -141,6 +147,7 @@ data/experiments/{experiment_name}/
 
 ```bash
 OPENAI_API_KEY=sk-...  # Required for GPT-4o coordinator
+HF_TOKEN=hf_...        # Optional: for gated models (Llama, etc.)
 ```
 
 ## Development Notes
@@ -160,6 +167,25 @@ OPENAI_API_KEY=sk-...  # Required for GPT-4o coordinator
 ### Adding New Model Support
 
 Add model info to `MODEL_SIZE_DATABASE` in `src/coordinator/spec_inference.py`
+
+### Implementation Status
+
+Current status of real vs mock implementations:
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Coordinator (GPT-4o) | Real | LangGraph + OpenAI |
+| Pareto Frontier | Real | Multi-objective optimization |
+| Quantization (AutoRound/GPTQ/AWQ/INT8) | Real with fallback | Falls back to mock if libraries unavailable |
+| BenchmarkRunner | Real | Uses HuggingFace datasets |
+| LatencyEvaluator | Real | torch.cuda timing |
+| Energy Tracking | Real with fallback | Uses codecarbon, falls back to mock |
+| VRAM Estimation | Real with fallback | Uses HF Hub API / model config |
+| HumanEval Code Execution | Real | Multiprocessing with timeout |
+| Spec Inference | Rule-based | Static model database + regex |
+| Search Algorithms | Partial | Bayesian real, Evolutionary fitness mock |
+
+See `TODO.md` for remaining items.
 
 ### Git Workflow
 

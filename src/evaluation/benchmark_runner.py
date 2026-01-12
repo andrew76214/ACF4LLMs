@@ -9,11 +9,8 @@ from datetime import datetime
 from pathlib import Path
 import logging
 
-from src.evaluation.evaluators.gsm8k_evaluator import GSM8KEvaluator
-from src.evaluation.evaluators.commonsense_evaluator import CommonsenseQAEvaluator
-from src.evaluation.evaluators.truthful_evaluator import TruthfulQAEvaluator
+from src.evaluation.evaluators.lm_eval_evaluator import LMEvalEvaluator
 from src.evaluation.evaluators.humaneval_evaluator import HumanEvalEvaluator
-from src.evaluation.evaluators.bigbench_hard_evaluator import BigBenchHardEvaluator
 from src.evaluation.evaluators.latency_evaluator import LatencyEvaluator
 
 logger = logging.getLogger(__name__)
@@ -37,13 +34,13 @@ class BenchmarkRunner:
         self.cache_dir = cache_dir or "data/cache/evaluations"
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
 
-        # Initialize evaluators
-        self.evaluators = {
-            "gsm8k": GSM8KEvaluator(device=device),
-            "commonsenseqa": CommonsenseQAEvaluator(device=device),
-            "truthfulqa": TruthfulQAEvaluator(device=device),
+        # lm-eval handles most benchmarks (gsm8k, commonsenseqa, truthfulqa, bigbench_hard,
+        # mmlu, hellaswag, arc_easy, arc_challenge, winogrande)
+        self.lm_eval_evaluator = LMEvalEvaluator(device=device)
+
+        # Custom evaluators for specialized tasks
+        self.custom_evaluators = {
             "humaneval": HumanEvalEvaluator(device=device),
-            "bigbench_hard": BigBenchHardEvaluator(device=device),
             "latency": LatencyEvaluator(device=device),
         }
 
@@ -88,11 +85,49 @@ class BenchmarkRunner:
             logger.error(f"Failed to load model: {e}")
             return {"error": str(e)}
 
-        # Run each benchmark
-        for benchmark in benchmarks:
-            if benchmark.lower() in self.evaluators:
-                logger.info(f"Running {benchmark} evaluation...")
-                evaluator = self.evaluators[benchmark.lower()]
+        # Separate benchmarks into lm-eval vs custom
+        lm_eval_tasks = [
+            b for b in benchmarks
+            if LMEvalEvaluator.is_task_supported(b.lower())
+        ]
+        custom_tasks = [
+            b for b in benchmarks
+            if b.lower() in self.custom_evaluators
+        ]
+        unknown_tasks = [
+            b for b in benchmarks
+            if not LMEvalEvaluator.is_task_supported(b.lower())
+            and b.lower() not in self.custom_evaluators
+        ]
+
+        if unknown_tasks:
+            logger.warning(f"Unknown benchmarks (will be skipped): {unknown_tasks}")
+
+        # Run lm-eval benchmarks (all in one batch for efficiency)
+        if lm_eval_tasks:
+            logger.info(f"Running lm-eval benchmarks: {lm_eval_tasks}")
+            try:
+                limit = proxy_samples if use_proxy else None
+                lm_scores = self.lm_eval_evaluator.evaluate(
+                    model=model,
+                    tokenizer=tokenizer,
+                    tasks=lm_eval_tasks,
+                    limit=limit,
+                    batch_size=batch_size,
+                )
+                results["benchmark_scores"].update(lm_scores)
+            except Exception as e:
+                logger.error(f"lm-eval evaluation failed: {e}")
+                # Set failed benchmarks to 0
+                for task in lm_eval_tasks:
+                    results["benchmark_scores"][task.lower()] = 0.0
+
+        # Run custom evaluators (humaneval)
+        for benchmark in custom_tasks:
+            benchmark_lower = benchmark.lower()
+            if benchmark_lower in self.custom_evaluators:
+                logger.info(f"Running custom {benchmark} evaluation...")
+                evaluator = self.custom_evaluators[benchmark_lower]
 
                 try:
                     if use_proxy:
@@ -102,14 +137,12 @@ class BenchmarkRunner:
                     else:
                         score = evaluator.evaluate(model, tokenizer, batch_size=batch_size)
 
-                    results["benchmark_scores"][benchmark] = score
+                    results["benchmark_scores"][benchmark_lower] = score
                     logger.info(f"{benchmark}: {score:.3f}")
 
                 except Exception as e:
                     logger.error(f"Evaluation failed for {benchmark}: {e}")
-                    results["benchmark_scores"][benchmark] = 0.0
-            else:
-                logger.warning(f"Unknown benchmark: {benchmark}")
+                    results["benchmark_scores"][benchmark_lower] = 0.0
 
         # Calculate average accuracy
         if results["benchmark_scores"]:
@@ -121,7 +154,7 @@ class BenchmarkRunner:
 
         # Run performance evaluation
         logger.info("Running performance evaluation...")
-        perf_results = self.evaluators["latency"].evaluate_performance(
+        perf_results = self.custom_evaluators["latency"].evaluate_performance(
             model, tokenizer, batch_size=batch_size
         )
         results["performance_metrics"] = perf_results
