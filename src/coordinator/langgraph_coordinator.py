@@ -395,6 +395,7 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
                 json.dump(strategy.model_dump(), f, indent=2, default=str)
 
             # Execute LoRA/QLoRA fine-tuning
+            result = None
             try:
                 if method == "lora":
                     result = apply_lora_finetuning.invoke({
@@ -414,6 +415,10 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
             except Exception as e:
                 print(f"  {method.upper()} fine-tuning failed: {e}")
                 compressed_path = None
+
+            # Extract compression metrics
+            compression_ratio = result.get("compression_ratio", 1.0) if result else 1.0
+            model_size_gb = result.get("model_size_gb", state["model_spec"].get("model_size_gb", 1.0)) if result else state["model_spec"].get("model_size_gb", 1.0)
 
         else:
             # Handle standard quantization methods
@@ -437,6 +442,7 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
                 json.dump(strategy.model_dump(), f, indent=2, default=str)
 
             # Execute quantization
+            result = None
             try:
                 result = quantize_model.invoke({
                     "model_path": state["model_name"],
@@ -450,9 +456,15 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
                 print(f"  Quantization failed: {e}")
                 compressed_path = None
 
+            # Extract compression metrics
+            compression_ratio = result.get("compression_ratio", 1.0) if result else 1.0
+            model_size_gb = result.get("model_size_gb", state["model_spec"].get("model_size_gb", 1.0)) if result else state["model_spec"].get("model_size_gb", 1.0)
+
         return {
             "current_strategy": strategy.model_dump(),
             "compressed_model_path": compressed_path,
+            "compression_ratio": compression_ratio,
+            "compressed_model_size_gb": model_size_gb,
         }
 
     def _pruning_node(self, state: CompressionState) -> Dict[str, Any]:
@@ -488,6 +500,7 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
             json.dump(strategy.model_dump(), f, indent=2, default=str)
 
         # Execute pruning
+        result = None
         try:
             result = prune_model.invoke({
                 "model_path": state["model_name"],
@@ -501,9 +514,15 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
             print(f"  Pruning failed: {e}")
             compressed_path = None
 
+        # Extract compression metrics
+        compression_ratio = result.get("compression_ratio", 1.0) if result else 1.0
+        model_size_gb = result.get("model_size_gb", state["model_spec"].get("model_size_gb", 1.0)) if result else state["model_spec"].get("model_size_gb", 1.0)
+
         return {
             "current_strategy": strategy.model_dump(),
             "compressed_model_path": compressed_path,
+            "compression_ratio": compression_ratio,
+            "compressed_model_size_gb": model_size_gb,
         }
 
     def _evaluation_node(self, state: CompressionState) -> Dict[str, Any]:
@@ -532,9 +551,9 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
             result = EvaluationResult(
                 strategy_id=strategy.get("strategy_id", "unknown"),
                 checkpoint_path=compressed_path or state["model_name"],
-                model_size_gb=eval_result.get("model_size_gb", state["model_spec"].get("model_size_gb", 1.0)),
-                compression_ratio=eval_result.get("compression_ratio", 1.0),
-                accuracy=eval_result.get("accuracy", 0.0),
+                model_size_gb=state.get("compressed_model_size_gb") or state["model_spec"].get("model_size_gb", 1.0),
+                compression_ratio=state.get("compression_ratio") or 1.0,
+                accuracy=eval_result.get("average_accuracy", 0.0),
                 latency_ms=eval_result.get("latency_ms", 100.0),
                 throughput_tokens_per_sec=eval_result.get("throughput", 100.0),
                 memory_gb=eval_result.get("memory_gb", 1.0),
@@ -547,8 +566,8 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
             result = EvaluationResult(
                 strategy_id=strategy.get("strategy_id", "unknown"),
                 checkpoint_path=compressed_path or state["model_name"],
-                model_size_gb=state["model_spec"].get("model_size_gb", 1.0),
-                compression_ratio=1.0,
+                model_size_gb=state.get("compressed_model_size_gb") or state["model_spec"].get("model_size_gb", 1.0),
+                compression_ratio=state.get("compression_ratio") or 1.0,
                 accuracy=0.0,
                 latency_ms=1000.0,
                 throughput_tokens_per_sec=10.0,
@@ -626,6 +645,7 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
 
         # Save episode results
         episode_dir = Path(state["experiment_dir"]) / f"episode_{state['current_episode']:03d}"
+        episode_dir.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
         with open(episode_dir / "results.json", "w") as f:
             json.dump(result, f, indent=2, default=str)
 
@@ -649,6 +669,8 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
             "current_strategy": None,
             "current_result": None,
             "compressed_model_path": None,
+            "compression_ratio": None,
+            "compressed_model_size_gb": None,
         }
 
     def _get_elapsed_hours(self, state: CompressionState) -> float:

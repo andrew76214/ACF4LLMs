@@ -21,6 +21,47 @@ from src.tools.pruning_wrapper import get_pruner, estimate_pruning_benefits
 logger = logging.getLogger(__name__)
 
 
+def _estimate_model_size_gb(model_name: str) -> float:
+    """Estimate model size in GB from model name."""
+    import re
+
+    MODEL_SIZE_DATABASE = {
+        "gpt2": 0.5, "gpt2-medium": 1.5, "gpt2-large": 3.0, "gpt2-xl": 6.0,
+        "facebook/opt-125m": 0.25, "facebook/opt-350m": 0.7, "facebook/opt-1.3b": 2.6,
+        "facebook/opt-2.7b": 5.4, "facebook/opt-6.7b": 13.4, "facebook/opt-13b": 26.0,
+        "meta-llama/Meta-Llama-3-8B": 16.0, "meta-llama/Llama-2-7b-hf": 13.5,
+        "mistralai/Mistral-7B-v0.1": 13.5, "Qwen/Qwen-7B": 14.0,
+    }
+
+    if model_name in MODEL_SIZE_DATABASE:
+        return MODEL_SIZE_DATABASE[model_name]
+
+    model_lower = model_name.lower()
+    for key, size in MODEL_SIZE_DATABASE.items():
+        if key.lower() in model_lower or model_lower in key.lower():
+            return size
+
+    patterns = [
+        (r'(\d+\.?\d*)B', lambda x: float(x) * 2),
+        (r'(\d+\.?\d*)b', lambda x: float(x) * 2),
+        (r'(\d+)M', lambda x: float(x) / 1000 * 2),
+        (r'(\d+)m', lambda x: float(x) / 1000 * 2),
+    ]
+
+    for pattern, converter in patterns:
+        match = re.search(pattern, model_name)
+        if match:
+            return converter(match.group(1))
+
+    return 1.0
+
+
+def _estimate_params_from_size(size_gb: float) -> int:
+    """Estimate number of parameters from model size in GB (assuming FP16)."""
+    # FP16: 2 bytes per parameter, so params = size_gb * 1024^3 / 2
+    return int(size_gb * (1024**3) / 2)
+
+
 @tool
 def prune_model(
     model_path: str,
@@ -178,10 +219,10 @@ def prune_model_structured(
         # Mock pruning
         time.sleep(2)
         actual_sparsity = pruning_ratio
-        original_size = 16.0
+        original_size = _estimate_model_size_gb(checkpoint_path)
         pruned_size = original_size * (1 - pruning_ratio * 0.8)  # Not full reduction
-        pruned_params = int(8e9 * pruning_ratio)  # Mock 8B model
-        total_params = int(8e9)
+        total_params = _estimate_params_from_size(original_size)
+        pruned_params = int(total_params * pruning_ratio)
 
         # Create mock checkpoint
         Path(os.path.join(output_dir, "model.safetensors")).touch()
@@ -312,7 +353,8 @@ def prune_model_unstructured(
         logger.warning("Pruning not available, using mock")
         time.sleep(2)
         actual_sparsity = sparsity
-        pruned_size = 16.0 * (1 - sparsity * 0.5)  # Sparse doesn't reduce size as much
+        original_size = _estimate_model_size_gb(checkpoint_path)
+        pruned_size = original_size * (1 - sparsity * 0.5)  # Sparse doesn't reduce size as much
         Path(os.path.join(output_dir, "model.safetensors")).touch()
 
     pruning_time = time.time() - start_time
@@ -661,7 +703,7 @@ def get_pruning_subagent(spec: Dict[str, Any]) -> Dict[str, Any]:
         Subagent configuration dictionary
     """
     model_name = spec.get("model_name", "unknown")
-    model_size = spec.get("model_size_gb", 16.0)
+    model_size = spec.get("model_size_gb") or _estimate_model_size_gb(model_name)
 
     prompt = f"""You are a Pruning Specialist Agent responsible for model sparsification.
 

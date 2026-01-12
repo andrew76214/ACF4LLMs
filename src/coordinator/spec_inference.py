@@ -247,9 +247,9 @@ def infer_spec(model_name: str, dataset: str, **kwargs) -> ModelSpec:
             model_size_gb, parameter_count = size_info
         else:
             # Default fallback for unknown models
-            print(f"Warning: Unknown model size for {model_name}, assuming 7B parameters")
-            model_size_gb = 14.0  # Assume 7B model
-            parameter_count = "7B"
+            print(f"Warning: Unknown model size for {model_name}, using 1.0 GB fallback")
+            model_size_gb = 1.0  # Conservative fallback
+            parameter_count = "unknown"
     else:
         # Extract parameter count from name if available
         size_info = extract_model_size_from_name(model_name)

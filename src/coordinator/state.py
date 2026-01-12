@@ -44,6 +44,8 @@ class CompressionState(TypedDict):
     current_strategy: Optional[Dict[str, Any]]  # CompressionStrategy as dict
     current_result: Optional[Dict[str, Any]]  # EvaluationResult as dict
     compressed_model_path: Optional[str]
+    compression_ratio: Optional[float]  # Compression ratio from quantization/pruning
+    compressed_model_size_gb: Optional[float]  # Compressed model size from quantization/pruning
 
     # Agent messages for LLM communication
     messages: Annotated[List[BaseMessage], add_messages]
@@ -102,6 +104,8 @@ def create_initial_state(
         current_strategy=None,
         current_result=None,
         compressed_model_path=None,
+        compression_ratio=None,
+        compressed_model_size_gb=None,
 
         # Messages
         messages=[],

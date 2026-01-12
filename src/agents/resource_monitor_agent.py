@@ -13,6 +13,41 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _estimate_model_size_gb(model_name: str) -> float:
+    """Estimate model size in GB from model name."""
+    import re
+
+    MODEL_SIZE_DATABASE = {
+        "gpt2": 0.5, "gpt2-medium": 1.5, "gpt2-large": 3.0, "gpt2-xl": 6.0,
+        "facebook/opt-125m": 0.25, "facebook/opt-350m": 0.7, "facebook/opt-1.3b": 2.6,
+        "facebook/opt-2.7b": 5.4, "facebook/opt-6.7b": 13.4, "facebook/opt-13b": 26.0,
+        "meta-llama/Meta-Llama-3-8B": 16.0, "meta-llama/Llama-2-7b-hf": 13.5,
+        "mistralai/Mistral-7B-v0.1": 13.5, "Qwen/Qwen-7B": 14.0,
+    }
+
+    if model_name in MODEL_SIZE_DATABASE:
+        return MODEL_SIZE_DATABASE[model_name]
+
+    model_lower = model_name.lower()
+    for key, size in MODEL_SIZE_DATABASE.items():
+        if key.lower() in model_lower or model_lower in key.lower():
+            return size
+
+    patterns = [
+        (r'(\d+\.?\d*)B', lambda x: float(x) * 2),
+        (r'(\d+\.?\d*)b', lambda x: float(x) * 2),
+        (r'(\d+)M', lambda x: float(x) / 1000 * 2),
+        (r'(\d+)m', lambda x: float(x) / 1000 * 2),
+    ]
+
+    for pattern, converter in patterns:
+        match = re.search(pattern, model_name)
+        if match:
+            return converter(match.group(1))
+
+    return 1.0
+
+
 @tool
 def check_gpu_availability() -> Dict[str, Any]:
     """Check available GPUs and their current status.
@@ -201,18 +236,20 @@ def monitor_resource_usage(
 def estimate_compression_resources(
     model_name: str,
     compression_method: str,
-    model_size_gb: float = 16.0,
+    model_size_gb: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Estimate resource requirements for compression.
 
     Args:
         model_name: Model to compress
         compression_method: Compression method to use
-        model_size_gb: Model size in GB
+        model_size_gb: Model size in GB (auto-estimated if not provided)
 
     Returns:
         Dictionary with resource estimates
     """
+    if model_size_gb is None:
+        model_size_gb = _estimate_model_size_gb(model_name)
     print(f"[Estimate] Estimating resources for {compression_method} on {model_size_gb:.1f}GB model")
 
     # Base estimates
@@ -317,7 +354,7 @@ def preflight_check(
 
     # Check VRAM requirements
     method = compression_strategy.get("method", "quantization")
-    model_size = compression_strategy.get("model_size_gb", 16.0)
+    model_size = compression_strategy.get("model_size_gb") or _estimate_model_size_gb(model_name)
 
     resource_est = estimate_compression_resources(model_name, method, model_size)
     checks["vram_required_gb"] = resource_est["vram_required_gb"]
@@ -493,7 +530,7 @@ def get_resource_monitor_subagent(spec: Dict[str, Any]) -> Dict[str, Any]:
         Subagent configuration dictionary
     """
     model_name = spec.get("model_name", "unknown")
-    model_size = spec.get("model_size_gb", 16.0)
+    model_size = spec.get("model_size_gb") or _estimate_model_size_gb(model_name)
 
     prompt = f"""You are a Resource Monitor Agent responsible for system resource management.
 

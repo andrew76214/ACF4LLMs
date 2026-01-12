@@ -13,6 +13,46 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _estimate_model_size_gb(model_name: str) -> float:
+    """Estimate model size in GB from model name."""
+    import re
+
+    MODEL_SIZE_DATABASE = {
+        "gpt2": 0.5, "gpt2-medium": 1.5, "gpt2-large": 3.0, "gpt2-xl": 6.0,
+        "facebook/opt-125m": 0.25, "facebook/opt-350m": 0.7, "facebook/opt-1.3b": 2.6,
+        "facebook/opt-2.7b": 5.4, "facebook/opt-6.7b": 13.4, "facebook/opt-13b": 26.0,
+        "meta-llama/Meta-Llama-3-8B": 16.0, "meta-llama/Llama-2-7b-hf": 13.5,
+        "mistralai/Mistral-7B-v0.1": 13.5, "Qwen/Qwen-7B": 14.0,
+    }
+
+    if model_name in MODEL_SIZE_DATABASE:
+        return MODEL_SIZE_DATABASE[model_name]
+
+    model_lower = model_name.lower()
+    for key, size in MODEL_SIZE_DATABASE.items():
+        if key.lower() in model_lower or model_lower in key.lower():
+            return size
+
+    patterns = [
+        (r'(\d+\.?\d*)B', lambda x: float(x) * 2),
+        (r'(\d+\.?\d*)b', lambda x: float(x) * 2),
+        (r'(\d+)M', lambda x: float(x) / 1000 * 2),
+        (r'(\d+)m', lambda x: float(x) / 1000 * 2),
+    ]
+
+    for pattern, converter in patterns:
+        match = re.search(pattern, model_name)
+        if match:
+            return converter(match.group(1))
+
+    return 1.0
+
+
+def _estimate_params_from_size(size_gb: float) -> int:
+    """Estimate number of parameters from model size in GB (assuming FP16)."""
+    return int(size_gb * (1024**3) / 2)
+
+
 @tool
 def finetune_with_lora(
     checkpoint_path: str,
@@ -136,9 +176,10 @@ def finetune_with_lora(
         logger.warning("PEFT not available, using mock fine-tuning")
         # Mock fine-tuning
         time.sleep(3)  # Simulate training time
-        trainable_params = lora_rank * 1000000  # Mock
-        total_params = 8000000000  # Mock 8B params
-        lora_percentage = 0.1
+        model_size = _estimate_model_size_gb(checkpoint_path)
+        total_params = _estimate_params_from_size(model_size)
+        trainable_params = lora_rank * 1000000  # LoRA params scale with rank
+        lora_percentage = (trainable_params / total_params) * 100
         accuracy_improvement = 0.02
 
         # Create mock checkpoint
@@ -349,8 +390,8 @@ def estimate_finetuning_requirements(
     Returns:
         Dictionary with resource estimates
     """
-    # Estimate based on model size (mock)
-    base_model_size_gb = 16.0  # Assume 8B model
+    # Estimate based on model size
+    base_model_size_gb = _estimate_model_size_gb(checkpoint_path)
 
     if method == "full":
         # Full fine-tuning needs ~4x model size
@@ -430,12 +471,12 @@ def merge_lora_weights(
         tokenizer.save_pretrained(output_dir)
 
         print(f"[Merge] Model merged and saved to {output_dir}")
-        merged_size = 16.0  # Mock
+        merged_size = _estimate_model_size_gb(base_checkpoint)
 
     except ImportError:
         print("[Merge] PEFT not available, creating mock merged model")
         Path(os.path.join(output_dir, "model.safetensors")).touch()
-        merged_size = 16.0
+        merged_size = _estimate_model_size_gb(base_checkpoint)
 
     return {
         "merged_checkpoint": output_dir,
