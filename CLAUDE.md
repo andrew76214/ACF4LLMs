@@ -101,10 +101,12 @@ pytest tests/test_basic.py::test_spec_inference -v
 | **State Schema** | `src/coordinator/state.py` | LangGraph state definition and utilities |
 | **Spec Inference** | `src/coordinator/spec_inference.py` | Auto-infers model specs from model name |
 | **Pareto Frontier** | `src/coordinator/pareto.py` | Multi-objective optimization tracking |
-| **Quantization Tools** | `src/agents/quantization_agent.py` | AutoRound, GPTQ, AWQ, INT8 tools |
+| **Quantization Tools** | `src/agents/quantization_agent.py` | AutoRound, GPTQ, AWQ, INT8, LoRA, QLoRA tools |
 | **Evaluation Tools** | `src/agents/evaluation_agent.py` | Benchmark evaluation tools |
 | **Search Tools** | `src/agents/search_agent.py` | Bayesian, evolutionary, bandit search |
+| **Pruning Tools** | `src/agents/pruning_agent.py` | Magnitude and structured pruning |
 | **Quantization Wrappers** | `src/tools/quantization_wrapper.py` | Real quantization implementations |
+| **lm-eval Integration** | `src/evaluation/evaluators/lm_eval_evaluator.py` | EleutherAI lm-eval harness wrapper |
 | **Schemas** | `src/common/schemas.py` | Pydantic data models |
 
 ### Episode-Based Workflow
@@ -177,13 +179,17 @@ Current status of real vs mock implementations:
 | Coordinator (GPT-4o) | Real | LangGraph + OpenAI |
 | Pareto Frontier | Real | Multi-objective optimization |
 | Quantization (AutoRound/GPTQ/AWQ/INT8) | Real with fallback | Falls back to mock if libraries unavailable |
+| LoRA/QLoRA Fine-tuning | Real with fallback | Uses PEFT library |
+| lm-eval Integration | Real | Supports MMLU, HellaSwag, ARC, WinoGrande, etc. |
 | BenchmarkRunner | Real | Uses HuggingFace datasets |
 | LatencyEvaluator | Real | torch.cuda timing |
 | Energy Tracking | Real with fallback | Uses codecarbon, falls back to mock |
 | VRAM Estimation | Real with fallback | Uses HF Hub API / model config |
 | HumanEval Code Execution | Real | Multiprocessing with timeout |
 | Spec Inference | Rule-based | Static model database + regex |
-| Search Algorithms | Partial | Bayesian real, Evolutionary fitness mock |
+| Search Algorithms | Real | Bayesian, Evolutionary, Multi-Armed Bandit |
+| Pruning | Partial | Basic structure, full implementation pending |
+| Distillation | Planned | Not yet implemented |
 
 See `TODO.md` for remaining items.
 
@@ -191,4 +197,20 @@ See `TODO.md` for remaining items.
 
 - Main branch: `main`
 - Development: `andrew_dev`
-- Note: Documentation in `SPEC.md` is in Chinese
+- Note: Documentation in `SPEC.md` and `README.md` is in Chinese
+
+### Debugging & Verification
+
+```bash
+# Check GPU availability
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}, Devices: {torch.cuda.device_count()}')"
+
+# Verify quantization libraries
+python -c "from src.tools.quantization_wrapper import QuantizationWrapper; print(QuantizationWrapper.get_available_methods())"
+
+# Quick smoke test with mock model
+pytest tests/test_basic.py -v
+
+# Check OpenAI API connectivity
+python -c "from langchain_openai import ChatOpenAI; m = ChatOpenAI(); print('OK')"
+```
