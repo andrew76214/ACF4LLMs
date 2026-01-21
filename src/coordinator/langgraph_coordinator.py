@@ -2,13 +2,18 @@
 
 This module implements a fully autonomous LLM-driven multi-agent system
 for model compression optimization using LangGraph's state machine.
+
+Enhanced with:
+- Dynamic Skill Discovery: Auto-discover available compression methods
+- Skill Composition: Chain multiple techniques (e.g., Pruning → Quantization → LoRA)
+- Skill Learning: Learn from history to make better recommendations
 """
 
 import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, Literal
+from typing import Dict, Any, Optional, Literal, List
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
@@ -60,43 +65,88 @@ from src.agents.pruning_agent import (
     list_available_pruning_methods,
 )
 
+# Import skills system
+from src.skills import (
+    SkillRegistry,
+    get_available_skills,
+    get_skills_prompt,
+    get_global_memory,
+    SkillContext,
+    SkillResult,
+    CompressionPipeline,
+    get_template,
+    get_template_names,
+    generate_llm_template_prompt,
+    get_templates_for_model_family,
+    PIPELINE_TEMPLATES,
+)
 
-# System prompts
-COORDINATOR_SYSTEM_PROMPT = """You are an expert model compression optimization coordinator.
+
+# Base system prompt (will be enhanced with dynamic skills)
+COORDINATOR_SYSTEM_PROMPT_BASE = """You are an expert model compression optimization coordinator.
 Your goal is to find Pareto-optimal compression strategies that balance accuracy, latency, memory, and model size.
 
 You make autonomous decisions about which compression strategies to try next based on:
 1. Current Pareto frontier analysis - identify gaps in the accuracy/latency/size trade-off space
 2. Historical results - learn from successful and failed strategies
 3. Model characteristics - choose methods suitable for the model family
+4. Skill recommendations - leverage learned knowledge from past experiments
 
 Available actions:
-- "quantization": Apply a quantization strategy (AutoRound, GPTQ, INT8, AWQ with various bit-widths)
-- "lora": Apply LoRA fine-tuning (for accuracy recovery after aggressive compression)
-- "qlora": Apply QLoRA (4-bit base + LoRA, memory-efficient training for large models)
-- "pruning": Apply pruning to remove weights (magnitude or structured pruning)
+- "quantization": Apply a single quantization strategy
+- "lora": Apply LoRA fine-tuning (for accuracy recovery)
+- "qlora": Apply QLoRA (4-bit base + LoRA, memory-efficient)
+- "pruning": Apply pruning to remove weights
+- "pipeline": Execute a multi-step compression pipeline (chains multiple techniques)
 - "search": Use optimization algorithms to suggest better strategies
 - "end": Terminate optimization (when converged or budget exhausted)
 
-When choosing quantization, specify:
-- method: One of "autoround", "gptq", "int8", "awq"
-- bits: 2, 3, 4, or 8
+When choosing a single skill (quantization/lora/qlora/pruning), specify parameters as described below.
 
-When choosing lora/qlora, specify:
-- method: "lora" or "qlora"
-- lora_rank: 8, 16, 32, or 64 (higher = more capacity but larger adapter)
-
-When choosing pruning, specify:
-- method: One of "magnitude", "structured"
-- sparsity: Target sparsity ratio (0.1 to 0.7, e.g., 0.3 = 30% weights removed)
-- granularity: For structured pruning, one of "channel", "head"
+When choosing "pipeline", specify:
+- pipeline_name: Name of a predefined pipeline template, OR
+- pipeline_steps: Custom list of steps to execute
 
 Compression strategy tips:
-- Use LoRA/QLoRA to recover accuracy after aggressive quantization (e.g., 4-bit)
-- QLoRA is preferred for large models due to memory efficiency
-- Pruning can be combined with quantization - prune first, then quantize for maximum compression
+- Use pipelines for maximum compression (e.g., Pruning → Quantization → LoRA recovery)
+- LoRA/QLoRA can recover accuracy after aggressive compression
+- Pipelines can have conditional steps that only execute if certain conditions are met
+- Learn from history: skills that worked well before are likely to work again
 
 Always explain your reasoning before deciding."""
+
+
+def generate_coordinator_prompt(model_family: Optional[str] = None) -> str:
+    """Generate a dynamic coordinator system prompt with available skills.
+
+    Args:
+        model_family: Optional model family to customize recommendations
+
+    Returns:
+        Complete system prompt with skill descriptions
+    """
+    prompt_parts = [COORDINATOR_SYSTEM_PROMPT_BASE]
+
+    # Add dynamic skill descriptions
+    skills_prompt = get_skills_prompt()
+    if skills_prompt:
+        prompt_parts.append("\n\n" + skills_prompt)
+
+    # Add pipeline templates
+    templates_prompt = generate_llm_template_prompt()
+    if templates_prompt:
+        prompt_parts.append("\n\n" + templates_prompt)
+
+    # Add model-specific recommendations
+    if model_family:
+        recommended_templates = get_templates_for_model_family(model_family)
+        if recommended_templates:
+            prompt_parts.append(
+                f"\n\nRecommended pipelines for {model_family} models: "
+                f"{', '.join(recommended_templates)}"
+            )
+
+    return "\n".join(prompt_parts)
 
 QUANTIZATION_AGENT_PROMPT = """You are a quantization specialist agent.
 Your job is to apply quantization to compress neural network models.
@@ -128,6 +178,11 @@ class LangGraphCoordinator:
 
     This coordinator uses GPT-4o to make autonomous decisions about compression
     strategies and delegates execution to specialized worker agents.
+
+    Enhanced with:
+    - Dynamic skill discovery and registration
+    - Skill composition via pipelines
+    - Skill learning from historical results
     """
 
     def __init__(
@@ -137,6 +192,7 @@ class LangGraphCoordinator:
         max_episodes: int = 10,
         budget_hours: float = 2.0,
         experiment_name: Optional[str] = None,
+        use_skill_memory: bool = True,
     ):
         """Initialize the LangGraph coordinator.
 
@@ -146,6 +202,7 @@ class LangGraphCoordinator:
             max_episodes: Maximum compression episodes
             budget_hours: Time budget in hours
             experiment_name: Name for this experiment
+            use_skill_memory: Whether to use skill learning (default: True)
         """
         # Validate API key
         if not os.getenv("OPENAI_API_KEY"):
@@ -155,6 +212,7 @@ class LangGraphCoordinator:
         self.dataset = dataset
         self.max_episodes = max_episodes
         self.budget_hours = budget_hours
+        self.use_skill_memory = use_skill_memory
 
         # Infer model specification
         self.model_spec = infer_spec(model_name, dataset)
@@ -174,9 +232,20 @@ class LangGraphCoordinator:
             storage_path=str(self.experiment_dir / "pareto_frontier.json")
         )
 
+        # Initialize skill memory for learning
+        self.skill_memory = get_global_memory() if use_skill_memory else None
+
+        # Discover available skills
+        self.available_skills = get_available_skills()
+        print(f"[Skills] Discovered {len(self.available_skills)} available skills")
+
+        # Generate dynamic system prompt
+        model_family = self.model_spec.model_family if self.model_spec else None
+        self.coordinator_prompt = generate_coordinator_prompt(model_family)
+
         # Initialize LLMs
         self.llm_coordinator = ChatOpenAI(
-            model="gpt-5.2",
+            model="gpt-4o",
             temperature=0.7,
         )
         self.llm_worker = ChatOpenAI(
@@ -203,6 +272,7 @@ class LangGraphCoordinator:
         graph.add_node("coordinator", self._coordinator_node)
         graph.add_node("quantization", self._quantization_node)
         graph.add_node("pruning", self._pruning_node)
+        graph.add_node("pipeline", self._pipeline_node)  # New: multi-step pipeline
         graph.add_node("evaluation", self._evaluation_node)
         graph.add_node("search", self._search_node)
         graph.add_node("update_state", self._update_state_node)
@@ -217,6 +287,7 @@ class LangGraphCoordinator:
             {
                 "quantization": "quantization",
                 "pruning": "pruning",
+                "pipeline": "pipeline",
                 "search": "search",
                 "end": END,
             }
@@ -225,6 +296,7 @@ class LangGraphCoordinator:
         # Fixed edges
         graph.add_edge("quantization", "evaluation")
         graph.add_edge("pruning", "evaluation")
+        graph.add_edge("pipeline", "evaluation")  # Pipeline goes to evaluation after completion
         graph.add_edge("evaluation", "update_state")
         graph.add_edge("search", "coordinator")
         graph.add_edge("update_state", "coordinator")
@@ -247,12 +319,17 @@ class LangGraphCoordinator:
         # Route lora/qlora to the quantization node (handles all compression methods)
         if action in ["quantization", "lora", "qlora"]:
             return "quantization"
-        if action in ["pruning", "search"]:
+        if action in ["pruning", "search", "pipeline"]:
             return action
         return "end"
 
     def _coordinator_node(self, state: CompressionState) -> Dict[str, Any]:
         """Coordinator node: LLM decides the next action.
+
+        Enhanced with:
+        - Skill recommendations from learning history
+        - Pipeline support for multi-step compression
+        - Dynamic skill descriptions
 
         Args:
             state: Current compression state
@@ -273,6 +350,27 @@ class LangGraphCoordinator:
         pareto_summary = get_pareto_summary(state)
         recent_history = get_recent_history(state)
 
+        # Get skill recommendations from memory
+        recommendations_str = ""
+        skill_recommendations = None
+        if self.skill_memory:
+            skill_context = self._build_skill_context(state)
+            recommendations = self.skill_memory.query(skill_context, n_recommendations=3)
+            if recommendations:
+                skill_recommendations = [r.model_dump() for r in recommendations]
+                rec_lines = ["Skill Recommendations (based on history):"]
+                for rec in recommendations:
+                    rec_lines.append(
+                        f"  - {rec.skill_name}: {rec.reasoning} "
+                        f"(confidence: {rec.confidence:.0%})"
+                    )
+                recommendations_str = "\n".join(rec_lines)
+
+        # Get recommended pipeline templates
+        model_family = state['model_spec'].get('model_family', 'unknown')
+        recommended_pipelines = get_templates_for_model_family(model_family)
+        pipelines_str = f"Recommended pipelines for {model_family}: {', '.join(recommended_pipelines[:3])}"
+
         context = f"""
 Current State:
 - Model: {state['model_name']}
@@ -287,25 +385,31 @@ Current State:
 
 Model Info:
 - Size: {state['model_spec'].get('model_size_gb', 'unknown')} GB
-- Family: {state['model_spec'].get('model_family', 'unknown')}
+- Family: {model_family}
 - Preferred methods: {state['model_spec'].get('preferred_methods', [])}
+
+{recommendations_str}
+
+{pipelines_str}
 
 What should be the next action? Choose one:
 1. "quantization" with specific method and bits
 2. "lora" or "qlora" with lora_rank for fine-tuning
 3. "pruning" with method, sparsity, and granularity
-4. "search" to explore new strategies
-5. "end" if converged or should stop
+4. "pipeline" with pipeline_name for multi-step compression
+5. "search" to explore new strategies
+6. "end" if converged or should stop
 
 Respond in JSON format:
 For quantization: {{"action": "quantization", "method": "autoround|gptq|int8|awq", "bits": 4, "reasoning": "..."}}
 For LoRA/QLoRA: {{"action": "lora|qlora", "method": "lora|qlora", "lora_rank": 16, "reasoning": "..."}}
 For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity": 0.3, "granularity": "weight|channel|head", "reasoning": "..."}}
+For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|accuracy_recovery|...", "reasoning": "..."}}
 """
 
-        # Call LLM
+        # Call LLM with dynamic prompt
         messages = [
-            SystemMessage(content=COORDINATOR_SYSTEM_PROMPT),
+            SystemMessage(content=self.coordinator_prompt),
             HumanMessage(content=context),
         ]
 
@@ -337,6 +441,8 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
 
         # Build action params
         action_params = {}
+        pipeline_name = None
+
         if action == "quantization":
             action_params = {
                 "method": decision.get("method", "gptq"),
@@ -353,14 +459,70 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
                 "sparsity": decision.get("sparsity", 0.3),
                 "granularity": decision.get("granularity", "weight"),
             }
+        elif action == "pipeline":
+            pipeline_name = decision.get("pipeline_name", "balanced_quality")
+            action_params = {
+                "pipeline_name": pipeline_name,
+            }
+            print(f"  Pipeline: {pipeline_name}")
 
         return {
             "next_action": action,
             "action_params": action_params,
+            "pipeline_name": pipeline_name,
+            "skill_recommendations": skill_recommendations,
             "messages": [
                 AIMessage(content=f"Decided: {action}. {reasoning}")
             ],
         }
+
+    def _build_skill_context(self, state: CompressionState) -> SkillContext:
+        """Build a SkillContext from the current state for querying skill memory.
+
+        Args:
+            state: Current compression state
+
+        Returns:
+            SkillContext for memory query
+        """
+        model_spec = state.get("model_spec", {})
+        history = state.get("history", [])
+
+        # Determine current Pareto gap
+        pareto_gap = "balanced"
+        pareto_frontier = state.get("pareto_frontier", [])
+        if pareto_frontier:
+            accuracies = [s.get("result", {}).get("accuracy", 0) for s in pareto_frontier]
+            compressions = [s.get("result", {}).get("compression_ratio", 1) for s in pareto_frontier]
+            max_acc = max(accuracies) if accuracies else 0
+            max_comp = max(compressions) if compressions else 1
+
+            if max_acc < 0.85:
+                pareto_gap = "need_accuracy"
+            elif max_comp < 2.0:
+                pareto_gap = "need_compression"
+
+        # Get previous skills from history
+        previous_skills = []
+        for entry in history[-5:]:  # Last 5 episodes
+            strategy = entry.get("strategy", {})
+            methods = strategy.get("methods", [])
+            if methods:
+                method = methods[0]
+                if isinstance(method, dict):
+                    method = method.get("value", method.get("name", "unknown"))
+                previous_skills.append(str(method))
+
+        return SkillContext(
+            model_family=model_spec.get("model_family", "unknown"),
+            model_size_gb=model_spec.get("model_size_gb", 1.0),
+            target_objective=model_spec.get("primary_objective", "balanced"),
+            hardware_profile="auto",
+            previous_skills=previous_skills,
+            current_pareto_gap=pareto_gap,
+            baseline_accuracy=state.get("baseline_accuracy"),
+            current_compression_ratio=state.get("compression_ratio", 1.0),
+        )
 
     def _quantization_node(self, state: CompressionState) -> Dict[str, Any]:
         """Quantization node: Apply compression strategy (quantization or LoRA/QLoRA).
@@ -525,6 +687,104 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
             "compressed_model_size_gb": model_size_gb,
         }
 
+    def _pipeline_node(self, state: CompressionState) -> Dict[str, Any]:
+        """Pipeline node: Execute a multi-step compression pipeline.
+
+        Pipelines allow chaining multiple compression techniques with
+        conditional execution based on intermediate results.
+
+        Args:
+            state: Current compression state
+
+        Returns:
+            State updates with current_strategy and compressed_model_path
+        """
+        params = state.get("action_params", {})
+        pipeline_name = params.get("pipeline_name", "balanced_quality")
+
+        print(f"  Executing pipeline: {pipeline_name}")
+
+        # Get the pipeline template
+        pipeline = get_template(pipeline_name)
+        if pipeline is None:
+            print(f"  Warning: Pipeline '{pipeline_name}' not found, using balanced_quality")
+            pipeline = get_template("balanced_quality")
+
+        if pipeline is None:
+            # Fallback to single quantization if templates fail
+            print(f"  Error: Could not load any pipeline, falling back to GPTQ")
+            return self._quantization_node({
+                **state,
+                "action_params": {"method": "gptq", "bits": 4}
+            })
+
+        # Validate pipeline
+        is_valid, messages = pipeline.validate()
+        for msg in messages:
+            print(f"  {msg}")
+
+        # Execute the pipeline
+        pipeline_output_dir = (
+            Path(state["experiment_dir"]) /
+            f"episode_{state['current_episode']:03d}_pipeline"
+        )
+
+        try:
+            result = pipeline.execute(
+                model_path=state["model_name"],
+                state=state,
+                output_dir=str(pipeline_output_dir),
+                baseline_accuracy=state.get("baseline_accuracy"),
+            )
+
+            print(f"  Pipeline completed: {result.steps_executed} steps executed, "
+                  f"{result.steps_skipped} skipped")
+
+            if result.success and result.final_checkpoint_path:
+                compressed_path = result.final_checkpoint_path
+                compression_ratio = result.final_compression_ratio or 1.0
+                model_size_gb = result.final_model_size_gb or state["model_spec"].get("model_size_gb", 1.0)
+            else:
+                print(f"  Pipeline failed: {result.error_message}")
+                compressed_path = None
+                compression_ratio = 1.0
+                model_size_gb = state["model_spec"].get("model_size_gb", 1.0)
+
+        except Exception as e:
+            print(f"  Pipeline execution error: {e}")
+            compressed_path = None
+            compression_ratio = 1.0
+            model_size_gb = state["model_spec"].get("model_size_gb", 1.0)
+            result = None
+
+        # Create strategy representing the pipeline
+        # Use the pipeline name as the method
+        strategy = CompressionStrategy(
+            episode_id=state["current_episode"],
+            strategy_id=f"strategy_{state['current_episode']:03d}",
+            methods=[CompressionMethod.GPTQ],  # Placeholder - pipelines can have multiple
+            quantization_method=f"pipeline:{pipeline_name}",
+            calibration_dataset=state["dataset"],
+        )
+
+        # Save strategy
+        episode_dir = Path(state["experiment_dir"]) / f"episode_{state['current_episode']:03d}"
+        episode_dir.mkdir(parents=True, exist_ok=True)
+        with open(episode_dir / "strategy.json", "w") as f:
+            strategy_data = strategy.model_dump()
+            strategy_data["pipeline_name"] = pipeline_name
+            strategy_data["pipeline_result"] = result.model_dump() if result else None
+            json.dump(strategy_data, f, indent=2, default=str)
+
+        return {
+            "current_strategy": strategy.model_dump(),
+            "compressed_model_path": compressed_path,
+            "compression_ratio": compression_ratio,
+            "compressed_model_size_gb": model_size_gb,
+            "current_pipeline": pipeline.to_dict().get("steps") if pipeline else None,
+            "pipeline_name": pipeline_name,
+        }
+
     def _evaluation_node(self, state: CompressionState) -> Dict[str, Any]:
         """Evaluation node: Measure compressed model performance.
 
@@ -620,6 +880,8 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
     def _update_state_node(self, state: CompressionState) -> Dict[str, Any]:
         """Update state after evaluation.
 
+        Enhanced to record skill results to memory for learning.
+
         Args:
             state: Current compression state
 
@@ -642,6 +904,10 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
         else:
             print(f"  Not Pareto optimal")
             consecutive_no_improvement = state.get("consecutive_no_improvement", 0) + 1
+
+        # Record to skill memory for learning
+        if self.skill_memory:
+            self._record_skill_result(state, strategy, result, is_pareto)
 
         # Save episode results
         episode_dir = Path(state["experiment_dir"]) / f"episode_{state['current_episode']:03d}"
@@ -671,7 +937,90 @@ For pruning: {{"action": "pruning", "method": "magnitude|structured", "sparsity"
             "compressed_model_path": None,
             "compression_ratio": None,
             "compressed_model_size_gb": None,
+            "current_pipeline": None,
+            "pipeline_name": None,
         }
+
+    def _record_skill_result(
+        self,
+        state: CompressionState,
+        strategy: Dict[str, Any],
+        result: Dict[str, Any],
+        is_pareto: bool,
+    ) -> None:
+        """Record a skill execution result to memory for learning.
+
+        Args:
+            state: Current compression state
+            strategy: Strategy that was executed
+            result: Evaluation result
+            is_pareto: Whether the result is Pareto-optimal
+        """
+        try:
+            # Build skill context
+            skill_context = self._build_skill_context(state)
+
+            # Determine skill name from strategy
+            methods = strategy.get("methods", [])
+            if methods:
+                method = methods[0]
+                if isinstance(method, dict):
+                    method = method.get("value", method.get("name", "unknown"))
+                else:
+                    method = str(method)
+            else:
+                method = "unknown"
+
+            # Map to skill name
+            quant_method = strategy.get("quantization_method", "")
+            if quant_method and quant_method.startswith("pipeline:"):
+                skill_name = f"pipeline_{quant_method.split(':')[1]}"
+            elif method.lower() in ["gptq", "autoround", "int8", "awq"]:
+                skill_name = f"quantization_{method.lower()}"
+            elif method.lower() == "pruning":
+                pruning_method = strategy.get("pruning_method", "magnitude")
+                skill_name = f"pruning_{pruning_method}"
+            elif method.lower() in ["lora", "qlora"]:
+                skill_name = f"{method.lower()}_finetune"
+            else:
+                skill_name = f"unknown_{method.lower()}"
+
+            # Extract params
+            params = {}
+            if strategy.get("quantization_bits"):
+                params["bit_width"] = strategy["quantization_bits"]
+            if strategy.get("pruning_ratio"):
+                params["sparsity"] = strategy["pruning_ratio"]
+            if strategy.get("lora_rank"):
+                params["lora_rank"] = strategy["lora_rank"]
+
+            # Calculate accuracy delta
+            baseline_acc = state.get("baseline_accuracy", 1.0) or 1.0
+            current_acc = result.get("accuracy", 0.0)
+            accuracy_delta = current_acc - baseline_acc
+
+            # Build skill result
+            skill_result = SkillResult(
+                skill_name=skill_name,
+                params=params,
+                accuracy_delta=accuracy_delta,
+                compression_ratio=result.get("compression_ratio", 1.0),
+                is_pareto_optimal=is_pareto,
+                execution_time_sec=result.get("evaluation_time_sec", 0.0),
+                success=True,
+            )
+
+            # Record to memory
+            self.skill_memory.record(
+                context=skill_context,
+                result=skill_result,
+                experiment_id=self.experiment_name,
+            )
+
+            print(f"  [Memory] Recorded {skill_name} result to skill memory")
+
+        except Exception as e:
+            print(f"  [Memory] Failed to record skill result: {e}")
 
     def _get_elapsed_hours(self, state: CompressionState) -> float:
         """Calculate elapsed time in hours."""

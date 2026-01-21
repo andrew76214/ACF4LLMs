@@ -13,15 +13,15 @@
 - [x] `src/agents/search_agent.py` - evolutionary_search 的 fitness 目前是隨機值
 - [x] 需要連接真實評估結果作為 fitness
 
-### Pruning Agent
-- [ ] 實作 magnitude pruning
-- [ ] 實作 structured pruning
-- [ ] 整合到 LangGraph workflow
+### Pruning Agent ✅
+- [x] 實作 magnitude pruning
+- [x] 實作 structured pruning
+- [x] 整合到 LangGraph workflow
 
-### LoRA/QLoRA Agent
-- [ ] 實作 LoRA fine-tuning wrapper
-- [ ] 實作 QLoRA (4-bit + LoRA)
-- [ ] 整合到壓縮策略選項
+### LoRA/QLoRA Agent ✅
+- [x] 實作 LoRA fine-tuning wrapper
+- [x] 實作 QLoRA (4-bit + LoRA)
+- [x] 整合到壓縮策略選項
 
 ## 中優先級
 
@@ -80,7 +80,7 @@
 
 | 待改進檔案 | 問題 |
 |-----------|------|
-| `src/coordinator/spec_inference.py` | 靜態 MODEL_SIZE_DATABASE |
+| `src/common/model_utils.py` | 靜態 MODEL_SIZE_DATABASE (已整合到共用模組) |
 
 ### 新增檔案 (lm-eval 整合)
 

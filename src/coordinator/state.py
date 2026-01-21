@@ -51,7 +51,7 @@ class CompressionState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
 
     # Coordinator decision
-    next_action: Optional[str]  # "quantization", "evaluation", "search", "end"
+    next_action: Optional[str]  # "quantization", "evaluation", "search", "pipeline", "end"
     action_params: Optional[Dict[str, Any]]  # Parameters for the action
 
     # Termination tracking
@@ -62,6 +62,16 @@ class CompressionState(TypedDict):
     # Experiment metadata
     experiment_dir: str
 
+    # Pipeline state (for skill composition)
+    current_pipeline: Optional[List[Dict[str, Any]]]  # Current pipeline steps
+    pipeline_step_index: int  # Current step in pipeline (0-indexed)
+    intermediate_checkpoints: List[str]  # Paths to intermediate checkpoints
+    pipeline_name: Optional[str]  # Name of the pipeline being executed
+
+    # Skill learning context
+    baseline_accuracy: Optional[float]  # Baseline model accuracy for computing deltas
+    skill_recommendations: Optional[List[Dict[str, Any]]]  # Recommendations from skill memory
+
 
 def create_initial_state(
     model_name: str,
@@ -70,6 +80,7 @@ def create_initial_state(
     max_episodes: int = 10,
     budget_hours: float = 2.0,
     experiment_dir: str = "data/experiments/default",
+    baseline_accuracy: Optional[float] = None,
 ) -> CompressionState:
     """Create the initial state for a new compression optimization run.
 
@@ -80,6 +91,7 @@ def create_initial_state(
         max_episodes: Maximum number of compression episodes
         budget_hours: Time budget in hours
         experiment_dir: Directory to save experiment results
+        baseline_accuracy: Optional baseline model accuracy
 
     Returns:
         Initial CompressionState
@@ -121,6 +133,16 @@ def create_initial_state(
 
         # Metadata
         experiment_dir=experiment_dir,
+
+        # Pipeline state
+        current_pipeline=None,
+        pipeline_step_index=0,
+        intermediate_checkpoints=[],
+        pipeline_name=None,
+
+        # Skill learning context
+        baseline_accuracy=baseline_accuracy,
+        skill_recommendations=None,
     )
 
 

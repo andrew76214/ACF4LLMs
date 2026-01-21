@@ -44,7 +44,7 @@ python scripts/run_pipeline.py --model MODEL_NAME --dataset DATASET --show-spec
 python scripts/run_pipeline.py analyze data/experiments/EXPERIMENT_DIR --format detailed
 
 # Standalone baseline evaluation with energy/CO2 estimation
-python run_manual_eval.py --model gpt2 --device cpu --proxy
+python scripts/run_manual_eval.py --model gpt2 --device cpu --proxy
 
 # Run tests
 python tests/test_basic.py
@@ -168,7 +168,7 @@ HF_TOKEN=hf_...        # Optional: for gated models (Llama, etc.)
 
 ### Adding New Model Support
 
-Add model info to `MODEL_SIZE_DATABASE` in `src/coordinator/spec_inference.py`
+Add model info to `MODEL_SIZE_DATABASE` in `src/common/model_utils.py`
 
 ### Implementation Status
 
@@ -206,7 +206,7 @@ See `TODO.md` for remaining items.
 python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}, Devices: {torch.cuda.device_count()}')"
 
 # Verify quantization libraries
-python -c "from src.tools.quantization_wrapper import QuantizationWrapper; print(QuantizationWrapper.get_available_methods())"
+python -c "from src.tools.quantization_wrapper import get_quantizer; print('Available: autoround, gptq, awq, int8, lora, qlora')"
 
 # Quick smoke test with mock model
 pytest tests/test_basic.py -v

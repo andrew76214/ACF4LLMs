@@ -9,51 +9,9 @@ from typing import Dict, Optional, Any, Tuple, List
 from pathlib import Path
 from datetime import datetime
 
+from src.common.model_utils import estimate_model_size_gb
+
 logger = logging.getLogger(__name__)
-
-
-def _estimate_model_size_gb(model_name: str) -> float:
-    """Estimate model size in GB from model name.
-
-    Uses known model database and pattern matching to estimate the original model size.
-    Falls back to 1.0 GB if unknown.
-    """
-    import re
-
-    # Known model sizes (FP16 weights)
-    MODEL_SIZE_DATABASE = {
-        "gpt2": 0.5, "gpt2-medium": 1.5, "gpt2-large": 3.0, "gpt2-xl": 6.0,
-        "facebook/opt-125m": 0.25, "facebook/opt-350m": 0.7, "facebook/opt-1.3b": 2.6,
-        "facebook/opt-2.7b": 5.4, "facebook/opt-6.7b": 13.4, "facebook/opt-13b": 26.0,
-        "meta-llama/Meta-Llama-3-8B": 16.0, "meta-llama/Llama-2-7b-hf": 13.5,
-        "mistralai/Mistral-7B-v0.1": 13.5, "Qwen/Qwen-7B": 14.0,
-    }
-
-    # Check exact match
-    if model_name in MODEL_SIZE_DATABASE:
-        return MODEL_SIZE_DATABASE[model_name]
-
-    # Check partial match (e.g., "gpt2" in "openai/gpt2")
-    model_lower = model_name.lower()
-    for key, size in MODEL_SIZE_DATABASE.items():
-        if key.lower() in model_lower or model_lower in key.lower():
-            return size
-
-    # Pattern-based extraction (e.g., "7B" -> ~14 GB in FP16)
-    patterns = [
-        (r'(\d+\.?\d*)B', lambda x: float(x) * 2),  # B params -> ~2GB per billion in FP16
-        (r'(\d+\.?\d*)b', lambda x: float(x) * 2),
-        (r'(\d+)M', lambda x: float(x) / 1000 * 2),  # M params
-        (r'(\d+)m', lambda x: float(x) / 1000 * 2),
-    ]
-
-    for pattern, converter in patterns:
-        match = re.search(pattern, model_name)
-        if match:
-            return converter(match.group(1))
-
-    # Default fallback
-    return 1.0
 
 
 class BaseQuantizer:
@@ -146,7 +104,7 @@ class AutoRoundQuantizer(BaseQuantizer):
                 autoround.save_quantized(output_dir)
 
                 # Calculate metrics (use model_name since model is already quantized)
-                original_size = _estimate_model_size_gb(model_name)
+                original_size = estimate_model_size_gb(model_name)
                 quantized_size = original_size / (16 / bit_width)
 
                 del model  # Free memory
@@ -160,7 +118,7 @@ class AutoRoundQuantizer(BaseQuantizer):
 
         quantization_time = time.time() - start_time
 
-        fallback_size = _estimate_model_size_gb(model_name)
+        fallback_size = estimate_model_size_gb(model_name)
         metadata = {
             "method": "autoround",
             "model_name": model_name,
@@ -208,7 +166,7 @@ class AutoRoundQuantizer(BaseQuantizer):
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         Path(os.path.join(output_dir, "model.safetensors")).touch()
 
-        original_size = _estimate_model_size_gb(model_name)
+        original_size = estimate_model_size_gb(model_name)
         compression_ratio = 16 / bit_width
         compressed_size = original_size / compression_ratio
 
@@ -304,7 +262,7 @@ class GPTQQuantizer(BaseQuantizer):
                 gptq_model.save_quantized(output_dir)
                 tokenizer.save_pretrained(output_dir)
 
-                original_size = _estimate_model_size_gb(model_name)
+                original_size = estimate_model_size_gb(model_name)
                 quantized_size = original_size / (16 / bit_width)
 
                 del gptq_model
@@ -318,7 +276,7 @@ class GPTQQuantizer(BaseQuantizer):
 
         quantization_time = time.time() - start_time
 
-        fallback_size = _estimate_model_size_gb(model_name)
+        fallback_size = estimate_model_size_gb(model_name)
         metadata = {
             "method": "gptq",
             "model_name": model_name,
@@ -359,7 +317,7 @@ class GPTQQuantizer(BaseQuantizer):
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         Path(os.path.join(output_dir, "model.safetensors")).touch()
 
-        original_size = _estimate_model_size_gb(model_name)
+        original_size = estimate_model_size_gb(model_name)
         compression_ratio = 16 / bit_width
         compressed_size = original_size / compression_ratio
 
@@ -510,7 +468,7 @@ class AWQQuantizer(BaseQuantizer):
                 model.save_quantized(output_dir)
                 tokenizer.save_pretrained(output_dir)
 
-                original_size = _estimate_model_size_gb(model_name)
+                original_size = estimate_model_size_gb(model_name)
                 quantized_size = original_size / (16 / bit_width)
 
                 del model
@@ -524,7 +482,7 @@ class AWQQuantizer(BaseQuantizer):
 
         quantization_time = time.time() - start_time
 
-        fallback_size = _estimate_model_size_gb(model_name)
+        fallback_size = estimate_model_size_gb(model_name)
         metadata = {
             "method": "awq",
             "model_name": model_name,
@@ -562,7 +520,7 @@ class AWQQuantizer(BaseQuantizer):
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         Path(os.path.join(output_dir, "model.safetensors")).touch()
 
-        original_size = _estimate_model_size_gb(model_name)
+        original_size = estimate_model_size_gb(model_name)
         compression_ratio = 16 / bit_width
         compressed_size = original_size / compression_ratio
 
@@ -628,7 +586,7 @@ class INT8Quantizer(BaseQuantizer):
                 model.save_pretrained(output_dir)
                 tokenizer.save_pretrained(output_dir)
 
-                original_size = _estimate_model_size_gb(model_name)
+                original_size = estimate_model_size_gb(model_name)
                 quantized_size = original_size / 2  # INT8 is roughly 2x compression
 
                 del model
@@ -642,7 +600,7 @@ class INT8Quantizer(BaseQuantizer):
 
         quantization_time = time.time() - start_time
 
-        fallback_size = _estimate_model_size_gb(model_name)
+        fallback_size = estimate_model_size_gb(model_name)
         metadata = {
             "method": "int8",
             "model_name": model_name,
@@ -669,7 +627,7 @@ class INT8Quantizer(BaseQuantizer):
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         Path(os.path.join(output_dir, "model.safetensors")).touch()
 
-        original_size = _estimate_model_size_gb(model_name)
+        original_size = estimate_model_size_gb(model_name)
         compression_ratio = 2.0  # INT8 is 8-bit vs 16-bit FP16, so 2x compression
         compressed_size = original_size / compression_ratio
 
@@ -912,7 +870,7 @@ class LoRATrainer(BaseQuantizer):
         with open(os.path.join(output_dir, "adapter_config.json"), "w") as f:
             json.dump(adapter_config, f, indent=2)
 
-        original_size = _estimate_model_size_gb(model_name)
+        original_size = estimate_model_size_gb(model_name)
         adapter_size_mb = lora_rank * 0.5  # Rough estimate
 
         return {
@@ -1189,7 +1147,7 @@ class QLoRATrainer(BaseQuantizer):
         with open(os.path.join(output_dir, "adapter_config.json"), "w") as f:
             json.dump(adapter_config, f, indent=2)
 
-        original_size = _estimate_model_size_gb(model_name)
+        original_size = estimate_model_size_gb(model_name)
         compression_ratio = 16.0 / bits  # QLoRA uses 4-bit base model
         compressed_size = original_size / compression_ratio
         adapter_size_mb = lora_rank * 0.5

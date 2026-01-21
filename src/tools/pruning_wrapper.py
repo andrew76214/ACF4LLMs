@@ -11,42 +11,9 @@ from typing import Dict, Optional, Any, Tuple, List
 from pathlib import Path
 from datetime import datetime
 
+from src.common.model_utils import estimate_model_size_gb
+
 logger = logging.getLogger(__name__)
-
-
-def _estimate_model_size_gb(model_name: str) -> float:
-    """Estimate model size in GB from model name."""
-    import re
-
-    MODEL_SIZE_DATABASE = {
-        "gpt2": 0.5, "gpt2-medium": 1.5, "gpt2-large": 3.0, "gpt2-xl": 6.0,
-        "facebook/opt-125m": 0.25, "facebook/opt-350m": 0.7, "facebook/opt-1.3b": 2.6,
-        "facebook/opt-2.7b": 5.4, "facebook/opt-6.7b": 13.4, "facebook/opt-13b": 26.0,
-        "meta-llama/Meta-Llama-3-8B": 16.0, "meta-llama/Llama-2-7b-hf": 13.5,
-        "mistralai/Mistral-7B-v0.1": 13.5, "Qwen/Qwen-7B": 14.0,
-    }
-
-    if model_name in MODEL_SIZE_DATABASE:
-        return MODEL_SIZE_DATABASE[model_name]
-
-    model_lower = model_name.lower()
-    for key, size in MODEL_SIZE_DATABASE.items():
-        if key.lower() in model_lower or model_lower in key.lower():
-            return size
-
-    patterns = [
-        (r'(\d+\.?\d*)B', lambda x: float(x) * 2),
-        (r'(\d+\.?\d*)b', lambda x: float(x) * 2),
-        (r'(\d+)M', lambda x: float(x) / 1000 * 2),
-        (r'(\d+)m', lambda x: float(x) / 1000 * 2),
-    ]
-
-    for pattern, converter in patterns:
-        match = re.search(pattern, model_name)
-        if match:
-            return converter(match.group(1))
-
-    return 1.0
 
 
 class BasePruner:
@@ -198,7 +165,7 @@ class MagnitudePruner(BasePruner):
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         Path(os.path.join(output_dir, "model.safetensors")).touch()
 
-        original_size = _estimate_model_size_gb(model_name)
+        original_size = estimate_model_size_gb(model_name)
         # Magnitude pruning doesn't reduce stored size much (sparse format needed)
         # but effective size reduction can be estimated
         compression_ratio = 1.0 / (1.0 - sparsity * 0.8)  # ~80% effective
@@ -416,7 +383,7 @@ class StructuredPruner(BasePruner):
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         Path(os.path.join(output_dir, "model.safetensors")).touch()
 
-        original_size = _estimate_model_size_gb(model_name)
+        original_size = estimate_model_size_gb(model_name)
         # Structured pruning actually removes parameters
         compression_ratio = 1.0 / (1.0 - sparsity)
         compressed_size = original_size * (1 - sparsity)
@@ -497,7 +464,7 @@ def estimate_pruning_benefits(
                 break
 
     if model_size_gb is None:
-        model_size_gb = _estimate_model_size_gb(model_name)
+        model_size_gb = estimate_model_size_gb(model_name)
 
     # Estimate benefits
     if method == "magnitude":

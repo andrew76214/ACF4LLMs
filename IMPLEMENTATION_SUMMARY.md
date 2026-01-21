@@ -98,14 +98,14 @@
 - **Grid/Random Search**: Baseline search methods
 - **History Analysis**: Pattern extraction from results
 
-### MLflow Integration (`src/monitoring/mlflow_tracker.py`)
+### MLflow Integration (Planned)
 - **Experiment Tracking**: Episode-based tracking
 - **Metric Logging**: All compression and evaluation metrics
 - **Artifact Storage**: Model and strategy storage
 - **Run Comparison**: Multi-run analysis
 - **Dashboard Data**: Visualization preparation
 - **System Metrics**: GPU/memory monitoring
-- Fallback to mock tracker when MLflow unavailable
+- *Note: MLflow integration is planned but not yet implemented*
 
 ## Key Features Implemented
 
@@ -135,7 +135,7 @@
 - Pre-flight validation
 - Error handling and recovery
 - Caching for efficiency
-- MLflow experiment tracking
+- Experiment tracking (via local JSON files)
 
 ## Architecture Highlights
 
@@ -194,16 +194,12 @@ generator = AdaptiveStrategyGenerator(
 strategy = generator.generate_informed_strategy()
 ```
 
-### MLflow Tracking
-```python
-from src.monitoring.mlflow_tracker import create_experiment_tracker
-
-tracker = create_experiment_tracker("llama3_compression")
-tracker.start_episode(1, strategy, model_spec)
-tracker.log_compression_results(...)
-tracker.log_evaluation_results(...)
-tracker.end_episode()
-```
+### Experiment Tracking
+Experiments are tracked via local JSON files in `data/experiments/`:
+- `model_spec.json`: Inferred model specification
+- `pareto_frontier.json`: Pareto optimal solutions
+- `final_results.json`: Summary and best solutions
+- `episode_XXX/`: Per-episode strategy and results
 
 ## Performance Optimizations
 
