@@ -5,13 +5,114 @@ import torch
 import json
 import time
 import logging
-from typing import Dict, Optional, Any, Tuple, List
+from contextlib import contextmanager
+from typing import Dict, Optional, Any, Tuple, List, Generator
 from pathlib import Path
 from datetime import datetime
 
 from src.common.model_utils import estimate_model_size_gb
 
 logger = logging.getLogger(__name__)
+
+
+# Trusted model repositories for trust_remote_code
+# Add organization/model patterns that are trusted
+TRUSTED_MODEL_SOURCES = frozenset({
+    "meta-llama",
+    "mistralai",
+    "microsoft",
+    "google",
+    "facebook",
+    "EleutherAI",
+    "bigscience",
+    "tiiuae",
+    "Qwen",
+    "01-ai",
+    "deepseek-ai",
+    "internlm",
+    "baichuan-inc",
+    "THUDM",
+    "HuggingFaceH4",
+    "teknium",
+    "NousResearch",
+    "OpenAssistant",
+    "lmsys",
+    "stabilityai",
+    "mosaicml",
+    "databricks",
+})
+
+# Environment variable to disable trust_remote_code entirely
+ALLOW_TRUST_REMOTE_CODE = os.getenv("ALLOW_TRUST_REMOTE_CODE", "true").lower() == "true"
+
+
+def is_trusted_model_source(model_name: str) -> bool:
+    """Check if a model is from a trusted source.
+
+    Args:
+        model_name: HuggingFace model name or path
+
+    Returns:
+        True if the model is from a trusted source or is a local path
+    """
+    # Local paths are considered trusted
+    if os.path.exists(model_name):
+        return True
+
+    # Check if it's from a trusted organization
+    if "/" in model_name:
+        org = model_name.split("/")[0]
+        return org in TRUSTED_MODEL_SOURCES
+
+    # Single-name models (like "gpt2") are from HuggingFace and trusted
+    return True
+
+
+def should_trust_remote_code(model_name: str) -> bool:
+    """Determine if trust_remote_code should be enabled for a model.
+
+    Args:
+        model_name: HuggingFace model name or path
+
+    Returns:
+        True if trust_remote_code should be enabled
+    """
+    if not ALLOW_TRUST_REMOTE_CODE:
+        logger.warning("trust_remote_code disabled via ALLOW_TRUST_REMOTE_CODE=false")
+        return False
+
+    if is_trusted_model_source(model_name):
+        return True
+
+    logger.warning(
+        f"Model '{model_name}' is not from a trusted source. "
+        f"Set ALLOW_TRUST_REMOTE_CODE=true or add the organization to TRUSTED_MODEL_SOURCES "
+        f"if you trust this model."
+    )
+    return False
+
+
+@contextmanager
+def managed_model(model: Any) -> Generator[Any, None, None]:
+    """Context manager for safe model cleanup.
+
+    Ensures model is deleted and GPU memory is freed even if an exception occurs.
+
+    Args:
+        model: The model to manage
+
+    Yields:
+        The model for use within the context
+    """
+    try:
+        yield model
+    finally:
+        try:
+            del model
+        except Exception as e:
+            logger.debug(f"Error during model deletion: {e}")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 class BaseQuantizer:
@@ -65,8 +166,12 @@ class AutoRoundQuantizer(BaseQuantizer):
             output_dir = f"data/checkpoints/{model_short}_autoround_{bit_width}bit_{timestamp}"
 
         if self.auto_round_available:
+            model = None
             try:
                 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+                # Check if model source is trusted
+                trust_remote = should_trust_remote_code(model_name)
 
                 # Load model and tokenizer
                 logger.info(f"Loading model {model_name} for AutoRound quantization...")
@@ -74,9 +179,9 @@ class AutoRoundQuantizer(BaseQuantizer):
                     model_name,
                     torch_dtype=torch.float16,
                     device_map="auto",
-                    trust_remote_code=True
+                    trust_remote_code=trust_remote
                 )
-                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote)
 
                 # Get calibration data
                 calibration_data = self._get_calibration_data(
@@ -89,8 +194,8 @@ class AutoRoundQuantizer(BaseQuantizer):
                     tokenizer=tokenizer,
                     bits=bit_width,
                     group_size=group_size,
-                    seqlen=2048,
-                    batch_size=4,
+                    seqlen=kwargs.get("seqlen", 2048),
+                    batch_size=kwargs.get("batch_size", 4),
                     calibration_data=calibration_data,
                     device=str(self.device),
                 )
@@ -107,12 +212,15 @@ class AutoRoundQuantizer(BaseQuantizer):
                 original_size = estimate_model_size_gb(model_name)
                 quantized_size = original_size / (16 / bit_width)
 
-                del model  # Free memory
-                torch.cuda.empty_cache()
-
             except Exception as e:
                 logger.error(f"AutoRound quantization failed: {e}")
                 return self._mock_quantization(model_name, bit_width, output_dir)
+            finally:
+                # Always clean up model resources
+                if model is not None:
+                    del model
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         else:
             return self._mock_quantization(model_name, bit_width, output_dir)
 
@@ -142,8 +250,19 @@ class AutoRoundQuantizer(BaseQuantizer):
             "metadata": metadata,
         }
 
-    def _get_calibration_data(self, tokenizer, dataset_name: Optional[str], num_samples: int):
-        """Get calibration data for quantization."""
+    def _get_calibration_data(
+        self, tokenizer: Any, dataset_name: Optional[str], num_samples: int
+    ) -> List[Any]:
+        """Get calibration data for quantization.
+
+        Args:
+            tokenizer: HuggingFace tokenizer
+            dataset_name: Optional name of calibration dataset
+            num_samples: Number of calibration samples to generate
+
+        Returns:
+            List of tokenized calibration samples
+        """
         # In production, load actual dataset
         # For now, return mock data
         texts = [
@@ -154,8 +273,15 @@ class AutoRoundQuantizer(BaseQuantizer):
 
         return [tokenizer(text, return_tensors="pt") for text in texts[:num_samples]]
 
-    def _estimate_model_size(self, model) -> float:
-        """Estimate model size in GB."""
+    def _estimate_model_size(self, model: Any) -> float:
+        """Estimate model size in GB.
+
+        Args:
+            model: PyTorch model
+
+        Returns:
+            Model size in GB
+        """
         param_size = 0
         for param in model.parameters():
             param_size += param.nelement() * param.element_size()
@@ -224,11 +350,15 @@ class GPTQQuantizer(BaseQuantizer):
             output_dir = f"data/checkpoints/{model_short}_gptq_{bit_width}bit_{timestamp}"
 
         if self.gptq_available:
+            gptq_model = None
             try:
                 from transformers import AutoTokenizer
 
+                # Check if model source is trusted
+                trust_remote = should_trust_remote_code(model_name)
+
                 logger.info(f"Loading tokenizer for {model_name}...")
-                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote)
 
                 quantize_config = self._build_quantize_config(
                     bit_width=bit_width,
@@ -240,7 +370,7 @@ class GPTQQuantizer(BaseQuantizer):
                 gptq_model = self.GPTQModel.from_pretrained(
                     model_name,
                     quantize_config=quantize_config,
-                    trust_remote_code=True,
+                    trust_remote_code=trust_remote,
                 )
 
                 calibration_data = self._get_calibration_data(
@@ -274,12 +404,15 @@ class GPTQQuantizer(BaseQuantizer):
                 original_size = estimate_model_size_gb(model_name)
                 quantized_size = original_size / (16 / bit_width)
 
-                del gptq_model
-                torch.cuda.empty_cache()
-
             except Exception as e:
                 logger.error(f"GPTQ quantization failed: {e}")
                 return self._mock_quantization(model_name, bit_width, output_dir)
+            finally:
+                # Always clean up model resources
+                if gptq_model is not None:
+                    del gptq_model
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         else:
             return self._mock_quantization(model_name, bit_width, output_dir)
 
@@ -509,17 +642,21 @@ class AWQQuantizer(BaseQuantizer):
         **kwargs
     ) -> Optional[Dict[str, Any]]:
         """Quantize using vLLM's llm-compressor (preferred method)."""
+        model = None
         try:
             from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            # Check if model source is trusted
+            trust_remote = should_trust_remote_code(model_name)
 
             logger.info(f"Loading model {model_name} for AWQ quantization (llm-compressor)...")
             model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 torch_dtype="auto",
                 device_map="auto",
-                trust_remote_code=True,
+                trust_remote_code=trust_remote,
             )
-            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote)
 
             # AWQ recipe using llm-compressor
             # W4A16_ASYM = 4-bit weights, 16-bit activations, asymmetric quantization
@@ -553,9 +690,6 @@ class AWQQuantizer(BaseQuantizer):
             quantized_size = original_size / (16 / bit_width)
             quantization_time = time.time() - kwargs.get("_start_time", time.time())
 
-            del model
-            torch.cuda.empty_cache()
-
             metadata = {
                 "method": "awq",
                 "backend": "llm-compressor",
@@ -584,6 +718,12 @@ class AWQQuantizer(BaseQuantizer):
         except Exception as e:
             logger.warning(f"llm-compressor AWQ quantization failed: {e}, trying AutoAWQ fallback")
             return None
+        finally:
+            # Always clean up model resources
+            if model is not None:
+                del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _quantize_with_autoawq(
         self,
@@ -596,16 +736,20 @@ class AWQQuantizer(BaseQuantizer):
         **kwargs
     ) -> Optional[Dict[str, Any]]:
         """Quantize using AutoAWQ (legacy fallback)."""
+        model = None
         try:
             from transformers import AutoTokenizer
+
+            # Check if model source is trusted
+            trust_remote = should_trust_remote_code(model_name)
 
             logger.info(f"Loading model {model_name} for AWQ quantization (AutoAWQ)...")
             model = self.AutoAWQForCausalLM.from_pretrained(
                 model_name,
                 device_map="auto",
-                trust_remote_code=True,
+                trust_remote_code=trust_remote,
             )
-            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote)
 
             # AWQ config
             quant_config = {
@@ -635,9 +779,6 @@ class AWQQuantizer(BaseQuantizer):
             quantized_size = original_size / (16 / bit_width)
             quantization_time = time.time() - kwargs.get("_start_time", time.time())
 
-            del model
-            torch.cuda.empty_cache()
-
             metadata = {
                 "method": "awq",
                 "backend": "autoawq",
@@ -665,6 +806,12 @@ class AWQQuantizer(BaseQuantizer):
         except Exception as e:
             logger.error(f"AutoAWQ quantization failed: {e}")
             return None
+        finally:
+            # Always clean up model resources
+            if model is not None:
+                del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _get_calibration_texts(self, dataset_name: Optional[str], num_samples: int):
         """Get calibration texts for AWQ."""
@@ -744,8 +891,12 @@ class INT8Quantizer(BaseQuantizer):
             output_dir = f"data/checkpoints/{model_short}_int8_{timestamp}"
 
         if self.bnb_available:
+            model = None
             try:
                 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+                # Check if model source is trusted
+                trust_remote = should_trust_remote_code(model_name)
 
                 # INT8 config
                 quantization_config = BitsAndBytesConfig(
@@ -758,9 +909,9 @@ class INT8Quantizer(BaseQuantizer):
                     model_name,
                     quantization_config=quantization_config,
                     device_map="auto",
-                    trust_remote_code=True,
+                    trust_remote_code=trust_remote,
                 )
-                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote)
 
                 # Save model
                 logger.info(f"Saving INT8 model to {output_dir}")
@@ -771,12 +922,15 @@ class INT8Quantizer(BaseQuantizer):
                 original_size = estimate_model_size_gb(model_name)
                 quantized_size = original_size / 2  # INT8 is roughly 2x compression
 
-                del model
-                torch.cuda.empty_cache()
-
             except Exception as e:
                 logger.error(f"INT8 quantization failed: {e}")
                 return self._mock_quantization(model_name, output_dir)
+            finally:
+                # Always clean up model resources
+                if model is not None:
+                    del model
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         else:
             return self._mock_quantization(model_name, output_dir)
 
@@ -898,18 +1052,22 @@ class LoRATrainer(BaseQuantizer):
             output_dir = f"data/checkpoints/{model_short}_lora_r{lora_rank}_{timestamp}"
 
         if self.peft_available and self.trl_available:
+            model = None
             try:
                 from transformers import AutoModelForCausalLM, AutoTokenizer
                 from datasets import Dataset
+
+                # Check if model source is trusted
+                trust_remote = should_trust_remote_code(model_name)
 
                 logger.info(f"Loading model {model_name} for LoRA fine-tuning...")
                 model = AutoModelForCausalLM.from_pretrained(
                     model_name,
                     torch_dtype=torch.float16,
                     device_map="auto",
-                    trust_remote_code=True,
+                    trust_remote_code=trust_remote,
                 )
-                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote)
 
                 if tokenizer.pad_token is None:
                     tokenizer.pad_token = tokenizer.eos_token
@@ -969,14 +1127,17 @@ class LoRATrainer(BaseQuantizer):
                 # Calculate adapter size
                 adapter_size_mb = self._calculate_adapter_size(output_dir)
 
-                del model
-                torch.cuda.empty_cache()
-
             except Exception as e:
                 logger.error(f"LoRA fine-tuning failed: {e}")
                 import traceback
                 traceback.print_exc()
                 return self._mock_finetune(model_name, lora_rank, output_dir)
+            finally:
+                # Always clean up model resources
+                if model is not None:
+                    del model
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         else:
             return self._mock_finetune(model_name, lora_rank, output_dir)
 
@@ -1154,9 +1315,13 @@ class QLoRATrainer(BaseQuantizer):
             output_dir = f"data/checkpoints/{model_short}_qlora_{bits}bit_r{lora_rank}_{timestamp}"
 
         if self.peft_available and self.trl_available and self.bnb_available:
+            model = None
             try:
                 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
                 from datasets import Dataset
+
+                # Check if model source is trusted
+                trust_remote = should_trust_remote_code(model_name)
 
                 # Configure 4-bit quantization with CPU offload for large models
                 bnb_config = BitsAndBytesConfig(
@@ -1172,9 +1337,9 @@ class QLoRATrainer(BaseQuantizer):
                     model_name,
                     quantization_config=bnb_config,
                     device_map="auto",
-                    trust_remote_code=True,
+                    trust_remote_code=trust_remote,
                 )
-                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote)
 
                 if tokenizer.pad_token is None:
                     tokenizer.pad_token = tokenizer.eos_token
@@ -1244,14 +1409,17 @@ class QLoRATrainer(BaseQuantizer):
                 # Calculate adapter size
                 adapter_size_mb = self._calculate_adapter_size(output_dir)
 
-                del model
-                torch.cuda.empty_cache()
-
             except Exception as e:
                 logger.error(f"QLoRA fine-tuning failed: {e}")
                 import traceback
                 traceback.print_exc()
                 return self._mock_finetune(model_name, lora_rank, bits, output_dir)
+            finally:
+                # Always clean up model resources
+                if model is not None:
+                    del model
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         else:
             return self._mock_finetune(model_name, lora_rank, bits, output_dir)
 
@@ -1414,17 +1582,21 @@ class ASVDCompressor(BaseQuantizer):
             model_short = os.path.basename(model_name).replace("/", "_")
             output_dir = f"data/checkpoints/{model_short}_asvd_r{int(rank_ratio*100)}_{timestamp}"
 
+        model = None
         try:
             from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            # Check if model source is trusted
+            trust_remote = should_trust_remote_code(model_name)
 
             logger.info(f"Loading model {model_name} for ASVD compression...")
             model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 torch_dtype=torch.float16,
                 device_map="auto",
-                trust_remote_code=True,
+                trust_remote_code=trust_remote,
             )
-            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote)
 
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
@@ -1492,9 +1664,6 @@ class ASVDCompressor(BaseQuantizer):
             model.save_pretrained(output_dir)
             tokenizer.save_pretrained(output_dir)
 
-            del model
-            torch.cuda.empty_cache()
-
             compression_time = time.time() - start_time
 
             metadata = {
@@ -1528,6 +1697,12 @@ class ASVDCompressor(BaseQuantizer):
             import traceback
             traceback.print_exc()
             return self._mock_compression(model_name, rank_ratio, output_dir)
+        finally:
+            # Always clean up model resources
+            if model is not None:
+                del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _get_calibration_data(
         self, tokenizer, dataset_name: Optional[str], num_samples: int

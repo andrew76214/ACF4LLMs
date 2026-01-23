@@ -87,6 +87,7 @@ class MagnitudePruner(BasePruner):
             model_short = os.path.basename(model_name).replace("/", "_")
             output_dir = f"data/checkpoints/{model_short}_magnitude_{int(sparsity*100)}pct_{timestamp}"
 
+        model = None
         try:
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -127,12 +128,15 @@ class MagnitudePruner(BasePruner):
             # The compression ratio here is theoretical based on non-zero weights
             compression_ratio = 1.0 / (1.0 - actual_sparsity) if actual_sparsity < 1.0 else 1.0
 
-            del model
-            torch.cuda.empty_cache()
-
         except Exception as e:
             logger.error(f"Magnitude pruning failed: {e}")
             return self._mock_pruning(model_name, sparsity, output_dir)
+        finally:
+            # Always clean up model resources
+            if model is not None:
+                del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         pruning_time = time.time() - start_time
 
@@ -216,6 +220,7 @@ class StructuredPruner(BasePruner):
             model_short = os.path.basename(model_name).replace("/", "_")
             output_dir = f"data/checkpoints/{model_short}_structured_{granularity}_{int(sparsity*100)}pct_{timestamp}"
 
+        model = None
         try:
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -250,12 +255,15 @@ class StructuredPruner(BasePruner):
             pruned_size = self._estimate_model_size(model)
             compression_ratio = original_size / pruned_size if pruned_size > 0 else 1.0
 
-            del model
-            torch.cuda.empty_cache()
-
         except Exception as e:
             logger.error(f"Structured pruning failed: {e}")
             return self._mock_pruning(model_name, sparsity, granularity, output_dir)
+        finally:
+            # Always clean up model resources
+            if model is not None:
+                del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         pruning_time = time.time() - start_time
 

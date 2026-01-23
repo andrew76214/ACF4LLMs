@@ -1,5 +1,7 @@
 """FastAPI application for compression framework."""
 
+import os
+import threading
 from fastapi import FastAPI, BackgroundTasks, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,17 +25,81 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Add CORS middleware
+# CORS configuration from environment
+# In production, set ALLOWED_ORIGINS to comma-separated list of allowed domains
+# Example: ALLOWED_ORIGINS=https://myapp.com,https://admin.myapp.com
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else []
+ALLOW_CREDENTIALS = os.getenv("CORS_ALLOW_CREDENTIALS", "false").lower() == "true"
+
+# Development mode allows all origins (not recommended for production)
+IS_DEVELOPMENT = os.getenv("ENVIRONMENT", "development").lower() == "development"
+
+if IS_DEVELOPMENT and not ALLOWED_ORIGINS:
+    # In development, allow localhost by default
+    ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+    ]
+
+# Add CORS middleware with secure defaults
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Never use "*" with credentials=True in production
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"] if IS_DEVELOPMENT else [],
+    # Only allow credentials if explicitly enabled and origins are specified
+    allow_credentials=ALLOW_CREDENTIALS and bool(ALLOWED_ORIGINS),
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
 )
 
-# Storage for job status (in production, use Redis or database)
-jobs_storage = {}
+
+class ThreadSafeJobStorage:
+    """Thread-safe storage for job status with lock protection.
+
+    In production, consider using Redis or a database for persistence
+    and better scalability across multiple workers.
+    """
+
+    def __init__(self):
+        self._storage: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
+
+    def get(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Get job status by ID (thread-safe)."""
+        with self._lock:
+            return self._storage.get(job_id)
+
+    def set(self, job_id: str, data: Dict[str, Any]) -> None:
+        """Set job status (thread-safe)."""
+        with self._lock:
+            self._storage[job_id] = data
+
+    def update(self, job_id: str, **kwargs) -> None:
+        """Update specific fields of a job (thread-safe)."""
+        with self._lock:
+            if job_id in self._storage:
+                self._storage[job_id].update(kwargs)
+
+    def delete(self, job_id: str) -> None:
+        """Delete a job (thread-safe)."""
+        with self._lock:
+            self._storage.pop(job_id, None)
+
+    def list_all(self) -> List[Dict[str, Any]]:
+        """Get all jobs (thread-safe copy)."""
+        with self._lock:
+            return list(self._storage.values())
+
+    def __contains__(self, job_id: str) -> bool:
+        """Check if job exists (thread-safe)."""
+        with self._lock:
+            return job_id in self._storage
+
+
+# Thread-safe storage for job status
+jobs_storage = ThreadSafeJobStorage()
 
 
 class CompressionRequest(BaseModel):
@@ -105,7 +171,7 @@ async def start_compression(
         "error": None,
     }
 
-    jobs_storage[job_id] = job_status
+    jobs_storage.set(job_id, job_status)
 
     # Start compression in background
     background_tasks.add_task(
@@ -121,8 +187,7 @@ async def run_compression_job(job_id: str, config: Dict[str, Any]):
     """Run compression job in background."""
     try:
         # Update status
-        jobs_storage[job_id]["status"] = "running"
-        jobs_storage[job_id]["updated_at"] = datetime.now()
+        jobs_storage.update(job_id, status="running", updated_at=datetime.now())
 
         # Initialize coordinator
         coordinator = CompressionCoordinator(
@@ -144,29 +209,32 @@ async def run_compression_job(job_id: str, config: Dict[str, Any]):
         )
 
         # Update with results
-        jobs_storage[job_id]["status"] = "completed"
-        jobs_storage[job_id]["result"] = {
-            "best_solution": result["best_solution"] if result else None,
-            "pareto_frontier_size": len(result.get("pareto_frontier", [])) if result else 0,
-            "total_strategies_tried": result.get("total_strategies", 0) if result else 0,
-            "compression_achieved": result.get("best_compression_ratio", 1.0) if result else 1.0,
-        }
+        jobs_storage.update(
+            job_id,
+            status="completed",
+            result={
+                "best_solution": result["best_solution"] if result else None,
+                "pareto_frontier_size": len(result.get("pareto_frontier", [])) if result else 0,
+                "total_strategies_tried": result.get("total_strategies", 0) if result else 0,
+                "compression_achieved": result.get("best_compression_ratio", 1.0) if result else 1.0,
+            }
+        )
 
     except Exception as e:
-        jobs_storage[job_id]["status"] = "failed"
-        jobs_storage[job_id]["error"] = str(e)
+        jobs_storage.update(job_id, status="failed", error=str(e))
 
     finally:
-        jobs_storage[job_id]["updated_at"] = datetime.now()
+        jobs_storage.update(job_id, updated_at=datetime.now())
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
 async def get_job_status(job_id: str) -> JobStatus:
     """Get status of a compression job."""
-    if job_id not in jobs_storage:
+    job_data = jobs_storage.get(job_id)
+    if job_data is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    return JobStatus(**jobs_storage[job_id])
+    return JobStatus(**job_data)
 
 
 @app.get("/jobs", response_model=List[JobStatus])
@@ -175,7 +243,7 @@ async def list_jobs(
     limit: int = 100,
 ) -> List[JobStatus]:
     """List all jobs with optional filtering."""
-    jobs = list(jobs_storage.values())
+    jobs = jobs_storage.list_all()
 
     # Filter by status if provided
     if status:
@@ -203,10 +271,9 @@ async def infer_model_spec(request: ModelSpecRequest) -> Dict[str, Any]:
 @app.get("/pareto/{job_id}")
 async def get_pareto_frontier(job_id: str) -> Dict[str, Any]:
     """Get Pareto frontier for a job."""
-    if job_id not in jobs_storage:
+    job = jobs_storage.get(job_id)
+    if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-
-    job = jobs_storage[job_id]
 
     if job["status"] != "completed":
         raise HTTPException(

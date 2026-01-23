@@ -14,6 +14,15 @@ from src.monitoring.mlflow_tracker import create_experiment_tracker
 # Configure Celery
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# Configurable time limits (in seconds)
+# Default: 24 hours for task_time_limit, 23 hours for soft limit
+TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "86400"))  # 24 hours
+TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "82800"))  # 23 hours
+
+# Worker configuration
+WORKER_PREFETCH_MULTIPLIER = int(os.getenv("CELERY_WORKER_PREFETCH_MULTIPLIER", "1"))
+WORKER_MAX_TASKS_PER_CHILD = int(os.getenv("CELERY_WORKER_MAX_TASKS_PER_CHILD", "1"))
+
 app = Celery(
     "compression_tasks",
     broker=REDIS_URL,
@@ -29,10 +38,10 @@ app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=86400,  # 24 hours
-    task_soft_time_limit=82800,  # 23 hours
-    worker_prefetch_multiplier=1,
-    worker_max_tasks_per_child=1,  # Restart worker after each task to free memory
+    task_time_limit=TASK_TIME_LIMIT,
+    task_soft_time_limit=TASK_SOFT_TIME_LIMIT,
+    worker_prefetch_multiplier=WORKER_PREFETCH_MULTIPLIER,
+    worker_max_tasks_per_child=WORKER_MAX_TASKS_PER_CHILD,
 )
 
 

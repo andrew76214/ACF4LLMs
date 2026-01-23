@@ -57,6 +57,8 @@ def distill_model(
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
+    teacher_model = None
+    student_model = None
     try:
         from transformers import (
             AutoModelForCausalLM,
@@ -178,6 +180,14 @@ def distill_model(
         compression_ratio = 4.0
         accuracy_retention = 0.92
         Path(os.path.join(output_dir, "model.safetensors")).touch()
+    finally:
+        # Always clean up model resources
+        if teacher_model is not None:
+            del teacher_model
+        if student_model is not None:
+            del student_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     distillation_time = time.time() - start_time
 
@@ -432,8 +442,16 @@ def analyze_distillation_candidates(
     return recommendations
 
 
-def _create_student_model(teacher_checkpoint: str, student_config: Optional[Dict] = None):
-    """Create a student model from configuration."""
+def _create_student_model(teacher_checkpoint: str, student_config: Optional[Dict[str, Any]] = None) -> Any:
+    """Create a student model from configuration.
+
+    Args:
+        teacher_checkpoint: Path to teacher model checkpoint
+        student_config: Optional configuration dict for student model
+
+    Returns:
+        AutoModelForCausalLM instance
+    """
     from transformers import AutoModelForCausalLM, AutoConfig
 
     if student_config:
@@ -448,7 +466,7 @@ def _create_student_model(teacher_checkpoint: str, student_config: Optional[Dict
     return AutoModelForCausalLM.from_config(config)
 
 
-def _load_distillation_dataset(dataset_name: str, tokenizer, max_samples: int = 10000):
+def _load_distillation_dataset(dataset_name: str, tokenizer: Any, max_samples: int = 10000) -> Any:
     """Load dataset for distillation training."""
     # Mock dataset for now
     texts = [

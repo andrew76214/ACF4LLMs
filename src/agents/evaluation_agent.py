@@ -5,6 +5,7 @@ import os
 import time
 import random
 import logging
+import threading
 from typing import Dict, Optional, Any, List
 from datetime import datetime
 from pathlib import Path
@@ -17,36 +18,52 @@ from src.common.model_utils import estimate_model_size_gb
 logger = logging.getLogger(__name__)
 
 
-# Global runners (lazy initialization)
+# Thread-safe singleton pattern for global runners
 _benchmark_runner = None
+_benchmark_runner_lock = threading.Lock()
 _latency_evaluator = None
+_latency_evaluator_lock = threading.Lock()
+_perplexity_evaluator = None
+_perplexity_evaluator_lock = threading.Lock()
 
 
 def _get_benchmark_runner(device: str = "cuda"):
-    """Get or create the benchmark runner instance."""
+    """Get or create the benchmark runner instance (thread-safe).
+
+    Uses double-checked locking pattern for efficiency.
+    """
     global _benchmark_runner
     if _benchmark_runner is None:
-        try:
-            from src.evaluation.benchmark_runner import create_benchmark_runner
-            _benchmark_runner = create_benchmark_runner(device)
-            logger.info("Initialized real BenchmarkRunner")
-        except Exception as e:
-            logger.warning(f"Failed to initialize BenchmarkRunner: {e}")
-            return None
+        with _benchmark_runner_lock:
+            # Double-check after acquiring lock
+            if _benchmark_runner is None:
+                try:
+                    from src.evaluation.benchmark_runner import create_benchmark_runner
+                    _benchmark_runner = create_benchmark_runner(device)
+                    logger.info("Initialized real BenchmarkRunner")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize BenchmarkRunner: {e}")
+                    return None
     return _benchmark_runner
 
 
 def _get_latency_evaluator(device: str = "cuda"):
-    """Get or create the latency evaluator instance."""
+    """Get or create the latency evaluator instance (thread-safe).
+
+    Uses double-checked locking pattern for efficiency.
+    """
     global _latency_evaluator
     if _latency_evaluator is None:
-        try:
-            from src.evaluation.evaluators.latency_evaluator import LatencyEvaluator
-            _latency_evaluator = LatencyEvaluator(device=device)
-            logger.info("Initialized real LatencyEvaluator")
-        except Exception as e:
-            logger.warning(f"Failed to initialize LatencyEvaluator: {e}")
-            return None
+        with _latency_evaluator_lock:
+            # Double-check after acquiring lock
+            if _latency_evaluator is None:
+                try:
+                    from src.evaluation.evaluators.latency_evaluator import LatencyEvaluator
+                    _latency_evaluator = LatencyEvaluator(device=device)
+                    logger.info("Initialized real LatencyEvaluator")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize LatencyEvaluator: {e}")
+                    return None
     return _latency_evaluator
 
 
@@ -529,21 +546,23 @@ def compare_with_baseline(
     }
 
 
-# Global perplexity evaluator (lazy initialization)
-_perplexity_evaluator = None
-
-
 def _get_perplexity_evaluator(device: str = "cuda"):
-    """Get or create the perplexity evaluator instance."""
+    """Get or create the perplexity evaluator instance (thread-safe).
+
+    Uses double-checked locking pattern for efficiency.
+    """
     global _perplexity_evaluator
     if _perplexity_evaluator is None:
-        try:
-            from src.evaluation.evaluators.perplexity_evaluator import PerplexityEvaluator
-            _perplexity_evaluator = PerplexityEvaluator(device=device)
-            logger.info("Initialized PerplexityEvaluator")
-        except Exception as e:
-            logger.warning(f"Failed to initialize PerplexityEvaluator: {e}")
-            return None
+        with _perplexity_evaluator_lock:
+            # Double-check after acquiring lock
+            if _perplexity_evaluator is None:
+                try:
+                    from src.evaluation.evaluators.perplexity_evaluator import PerplexityEvaluator
+                    _perplexity_evaluator = PerplexityEvaluator(device=device)
+                    logger.info("Initialized PerplexityEvaluator")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize PerplexityEvaluator: {e}")
+                    return None
     return _perplexity_evaluator
 
 

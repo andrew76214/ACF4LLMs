@@ -909,14 +909,21 @@ def _get_default_compression_search_space() -> Dict[str, Any]:
 
 def _sample_params_dict(search_space: Dict[str, Any]) -> Dict[str, Any]:
     """Sample parameters from search space."""
-    params = {}
+    params: Dict[str, Any] = {}
     for name, spec in search_space.items():
         params[name] = _sample_param_value(spec)
     return params
 
 
-def _sample_param_value(spec: Any):
-    """Sample a single parameter value."""
+def _sample_param_value(spec: Any) -> Any:
+    """Sample a single parameter value.
+
+    Args:
+        spec: Parameter specification (dict with type info, list of choices, or literal value)
+
+    Returns:
+        Sampled parameter value
+    """
     if isinstance(spec, dict):
         if spec.get("type") == "choice":
             return random.choice(spec["values"])

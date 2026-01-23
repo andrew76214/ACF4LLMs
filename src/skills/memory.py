@@ -6,6 +6,8 @@ results and uses them to make recommendations for future decisions.
 
 import json
 import logging
+import os
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
@@ -22,8 +24,8 @@ from src.skills.schema import (
 
 logger = logging.getLogger(__name__)
 
-# Default storage path for global skill memory
-DEFAULT_MEMORY_PATH = "data/skill_memory/memory.json"
+# Default storage path for global skill memory (configurable via environment variable)
+DEFAULT_MEMORY_PATH = os.getenv("SKILL_MEMORY_PATH", "data/skill_memory/memory.json")
 
 
 class SkillMemory:
@@ -54,6 +56,7 @@ class SkillMemory:
         Args:
             storage_path: Path to the JSON storage file.
                          Uses default global path if not specified.
+                         Can also be set via SKILL_MEMORY_PATH environment variable.
         """
         self.storage_path = Path(storage_path or DEFAULT_MEMORY_PATH)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,6 +64,9 @@ class SkillMemory:
         self._records: List[SkillRecord] = []
         self._statistics: Dict[str, SkillStatistics] = {}
         self._last_aggregation: Optional[datetime] = None
+
+        # Thread safety lock for all operations
+        self._lock = threading.RLock()
 
         # Load existing memory
         self._load()
@@ -71,7 +77,7 @@ class SkillMemory:
         result: SkillResult,
         experiment_id: Optional[str] = None,
     ) -> None:
-        """Record a skill execution result.
+        """Record a skill execution result (thread-safe).
 
         Args:
             context: The context in which the skill was executed
@@ -85,12 +91,13 @@ class SkillMemory:
             experiment_id=experiment_id,
         )
 
-        self._records.append(record)
-        self._save()
+        with self._lock:
+            self._records.append(record)
+            self._save()
 
-        # Update statistics if we have enough records
-        if len(self._records) % 10 == 0:
-            self._aggregate_statistics()
+            # Update statistics if we have enough records
+            if len(self._records) % 10 == 0:
+                self._aggregate_statistics()
 
         logger.debug(f"Recorded skill execution: {result.skill_name}")
 
@@ -100,7 +107,7 @@ class SkillMemory:
         n_recommendations: int = 3,
         min_samples: int = 3,
     ) -> List[SkillRecommendation]:
-        """Query for skill recommendations based on context.
+        """Query for skill recommendations based on context (thread-safe).
 
         Args:
             context: The current context for which recommendations are needed
@@ -110,35 +117,36 @@ class SkillMemory:
         Returns:
             List of skill recommendations sorted by confidence
         """
-        # Ensure statistics are up to date
-        if self._last_aggregation is None or len(self._records) % 5 == 0:
-            self._aggregate_statistics()
+        with self._lock:
+            # Ensure statistics are up to date
+            if self._last_aggregation is None or len(self._records) % 5 == 0:
+                self._aggregate_statistics()
 
-        recommendations = []
+            recommendations = []
 
-        # Find similar contexts in history
-        similar_records = self._find_similar_contexts(context)
+            # Find similar contexts in history
+            similar_records = self._find_similar_contexts(context)
 
-        # Group by skill and analyze
-        skill_performance: Dict[str, List[SkillRecord]] = defaultdict(list)
-        for record in similar_records:
-            skill_performance[record.result.skill_name].append(record)
+            # Group by skill and analyze
+            skill_performance: Dict[str, List[SkillRecord]] = defaultdict(list)
+            for record in similar_records:
+                skill_performance[record.result.skill_name].append(record)
 
-        # Generate recommendations for each skill with sufficient data
-        for skill_name, records in skill_performance.items():
-            if len(records) < min_samples:
-                continue
+            # Generate recommendations for each skill with sufficient data
+            for skill_name, records in skill_performance.items():
+                if len(records) < min_samples:
+                    continue
 
-            rec = self._generate_recommendation(skill_name, records, context)
-            if rec is not None:
-                recommendations.append(rec)
+                rec = self._generate_recommendation(skill_name, records, context)
+                if rec is not None:
+                    recommendations.append(rec)
 
-        # Sort by confidence and return top N
-        recommendations.sort(key=lambda r: r.confidence, reverse=True)
-        return recommendations[:n_recommendations]
+            # Sort by confidence and return top N
+            recommendations.sort(key=lambda r: r.confidence, reverse=True)
+            return recommendations[:n_recommendations]
 
     def get_statistics(self, skill_name: str) -> Optional[SkillStatistics]:
-        """Get aggregated statistics for a specific skill.
+        """Get aggregated statistics for a specific skill (thread-safe).
 
         Args:
             skill_name: Name of the skill
@@ -146,28 +154,30 @@ class SkillMemory:
         Returns:
             SkillStatistics if available, None otherwise
         """
-        if self._last_aggregation is None:
-            self._aggregate_statistics()
+        with self._lock:
+            if self._last_aggregation is None:
+                self._aggregate_statistics()
 
-        return self._statistics.get(skill_name)
+            return self._statistics.get(skill_name)
 
     def get_all_statistics(self) -> Dict[str, SkillStatistics]:
-        """Get statistics for all skills.
+        """Get statistics for all skills (thread-safe).
 
         Returns:
             Dictionary mapping skill name to statistics
         """
-        if self._last_aggregation is None:
-            self._aggregate_statistics()
+        with self._lock:
+            if self._last_aggregation is None:
+                self._aggregate_statistics()
 
-        return self._statistics.copy()
+            return self._statistics.copy()
 
     def get_best_skill_for_objective(
         self,
         objective: str,
         model_family: Optional[str] = None,
     ) -> Optional[str]:
-        """Get the best performing skill for a specific objective.
+        """Get the best performing skill for a specific objective (thread-safe).
 
         Args:
             objective: Optimization objective ('accuracy', 'size', 'latency')
@@ -176,53 +186,54 @@ class SkillMemory:
         Returns:
             Name of the best skill, or None if insufficient data
         """
-        if self._last_aggregation is None:
-            self._aggregate_statistics()
+        with self._lock:
+            if self._last_aggregation is None:
+                self._aggregate_statistics()
 
-        relevant_records = self._records
-        if model_family:
-            relevant_records = [
-                r for r in relevant_records
-                if r.context.model_family.lower() == model_family.lower()
-            ]
+            relevant_records = self._records
+            if model_family:
+                relevant_records = [
+                    r for r in relevant_records
+                    if r.context.model_family.lower() == model_family.lower()
+                ]
 
-        if not relevant_records:
-            return None
+            if not relevant_records:
+                return None
 
-        # Group by skill
-        skill_scores: Dict[str, List[float]] = defaultdict(list)
+            # Group by skill
+            skill_scores: Dict[str, List[float]] = defaultdict(list)
 
-        for record in relevant_records:
-            if not record.result.success:
-                continue
+            for record in relevant_records:
+                if not record.result.success:
+                    continue
 
-            skill = record.result.skill_name
+                skill = record.result.skill_name
 
-            if objective == "accuracy":
-                # Higher accuracy delta is better (less negative)
-                skill_scores[skill].append(record.result.accuracy_delta)
-            elif objective == "size":
-                # Higher compression ratio is better
-                skill_scores[skill].append(record.result.compression_ratio)
-            elif objective == "latency":
-                # More negative latency delta is better
-                skill_scores[skill].append(-record.result.latency_delta)
+                if objective == "accuracy":
+                    # Higher accuracy delta is better (less negative)
+                    skill_scores[skill].append(record.result.accuracy_delta)
+                elif objective == "size":
+                    # Higher compression ratio is better
+                    skill_scores[skill].append(record.result.compression_ratio)
+                elif objective == "latency":
+                    # More negative latency delta is better
+                    skill_scores[skill].append(-record.result.latency_delta)
 
-        if not skill_scores:
-            return None
+            if not skill_scores:
+                return None
 
-        # Find skill with best average score
-        best_skill = None
-        best_avg = float('-inf')
+            # Find skill with best average score
+            best_skill = None
+            best_avg = float('-inf')
 
-        for skill, scores in skill_scores.items():
-            if len(scores) >= 3:  # Minimum samples
-                avg = statistics.mean(scores)
-                if avg > best_avg:
-                    best_avg = avg
-                    best_skill = skill
+            for skill, scores in skill_scores.items():
+                if len(scores) >= 3:  # Minimum samples
+                    avg = statistics.mean(scores)
+                    if avg > best_avg:
+                        best_avg = avg
+                        best_skill = skill
 
-        return best_skill
+            return best_skill
 
     def import_from_experiments(self, experiments_dir: str) -> int:
         """Import historical data from experiment directories.
@@ -268,16 +279,18 @@ class SkillMemory:
         return imported
 
     def clear(self) -> None:
-        """Clear all memory records."""
-        self._records.clear()
-        self._statistics.clear()
-        self._last_aggregation = None
-        self._save()
+        """Clear all memory records (thread-safe)."""
+        with self._lock:
+            self._records.clear()
+            self._statistics.clear()
+            self._last_aggregation = None
+            self._save()
         logger.info("Cleared skill memory")
 
     def get_record_count(self) -> int:
-        """Get the total number of records in memory."""
-        return len(self._records)
+        """Get the total number of records in memory (thread-safe)."""
+        with self._lock:
+            return len(self._records)
 
     def generate_llm_summary(self, context: Optional[SkillContext] = None) -> str:
         """Generate a summary of skill performance for LLM consumption.
@@ -759,26 +772,33 @@ class SkillMemory:
         return params
 
 
-# Global memory instance
+# Global memory instance with thread-safe initialization
 _global_memory: Optional[SkillMemory] = None
+_global_memory_lock = threading.Lock()
 
 
 def get_global_memory() -> SkillMemory:
-    """Get the global skill memory instance.
+    """Get the global skill memory instance (thread-safe).
+
+    Uses double-checked locking pattern for efficiency.
 
     Returns:
         Global SkillMemory instance
     """
     global _global_memory
     if _global_memory is None:
-        _global_memory = SkillMemory()
+        with _global_memory_lock:
+            # Double-check after acquiring lock
+            if _global_memory is None:
+                _global_memory = SkillMemory()
     return _global_memory
 
 
 def reset_global_memory() -> None:
-    """Reset the global skill memory instance."""
+    """Reset the global skill memory instance (thread-safe)."""
     global _global_memory
-    _global_memory = None
+    with _global_memory_lock:
+        _global_memory = None
 
 
 __all__ = [
