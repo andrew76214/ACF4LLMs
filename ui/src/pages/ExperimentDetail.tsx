@@ -83,7 +83,7 @@ export function ExperimentDetail() {
     failed: <XCircle className="w-5 h-5 text-red-500" />,
   };
 
-  const paretoPoints = pareto?.solutions ? solutionsToPoints(pareto.solutions) : [];
+  const paretoPoints = Array.isArray(pareto?.solutions) ? solutionsToPoints(pareto.solutions) : [];
 
   // Find best solution (highest accuracy)
   const bestSolution = pareto?.solutions?.reduce(
@@ -153,7 +153,7 @@ export function ExperimentDetail() {
       </div>
 
       {/* Logs Panel */}
-      {logsData && logsData.logs.length > 0 && (
+      {logsData && Array.isArray(logsData.logs) && logsData.logs.length > 0 && (
         <div className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
             <div className="flex items-center gap-2 text-gray-300">
@@ -307,7 +307,7 @@ export function ExperimentDetail() {
           )}
 
           {/* All solutions table */}
-          {pareto?.solutions && pareto.solutions.length > 0 && (
+          {Array.isArray(pareto?.solutions) && pareto.solutions.length > 0 && (
             <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               <div className="p-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-900">

@@ -130,7 +130,7 @@ export function NewJobForm() {
           onChange={(e) => setDataset(e.target.value)}
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all"
         >
-          {(benchmarks || ['gsm8k', 'commonsenseqa', 'truthfulqa', 'mmlu']).map(
+          {(Array.isArray(benchmarks) ? benchmarks : ['gsm8k', 'commonsenseqa', 'truthfulqa', 'mmlu']).map(
             (b) => (
               <option key={b} value={b}>
                 {b.toUpperCase()}
@@ -168,7 +168,7 @@ export function NewJobForm() {
           Compression Methods (optional)
         </label>
         <div className="flex flex-wrap gap-2">
-          {(methods || ['autoround', 'gptq', 'int8', 'awq', 'pruning', 'lora', 'qlora']).map(
+          {(Array.isArray(methods) ? methods : ['autoround', 'gptq', 'int8', 'awq', 'pruning', 'lora', 'qlora']).map(
             (method) => (
               <button
                 key={method}
