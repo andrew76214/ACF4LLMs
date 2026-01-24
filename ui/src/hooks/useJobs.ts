@@ -9,6 +9,7 @@ export const queryKeys = {
   pareto: (id: string) => ['pareto', id] as const,
   logs: (id: string) => ['logs', id] as const,
   health: ['health'] as const,
+  gpu: ['gpu'] as const,
   methods: ['methods'] as const,
   benchmarks: ['benchmarks'] as const,
   spec: (model: string, dataset: string) => ['spec', model, dataset] as const,
@@ -78,6 +79,16 @@ export function useHealth() {
     queryKey: queryKeys.health,
     queryFn: systemApi.health,
     refetchInterval: 30000, // Check every 30 seconds
+    retry: 1,
+  });
+}
+
+// GPU status with detailed info
+export function useGpu() {
+  return useQuery({
+    queryKey: queryKeys.gpu,
+    queryFn: systemApi.gpu,
+    refetchInterval: 10000, // Update every 10 seconds
     retry: 1,
   });
 }

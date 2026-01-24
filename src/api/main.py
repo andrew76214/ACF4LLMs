@@ -435,6 +435,35 @@ async def health_check() -> Dict[str, str]:
     }
 
 
+@app.get("/gpu")
+async def get_gpu_status() -> Dict[str, Any]:
+    """Get detailed GPU status including names and utilization."""
+    import torch
+
+    if not torch.cuda.is_available():
+        return {"available": False, "gpus": []}
+
+    gpus = []
+    for i in range(torch.cuda.device_count()):
+        props = torch.cuda.get_device_properties(i)
+        # Get memory info
+        mem_total = props.total_memory
+        mem_reserved = torch.cuda.memory_reserved(i)
+        mem_allocated = torch.cuda.memory_allocated(i)
+
+        gpus.append({
+            "index": i,
+            "name": props.name,
+            "memory_total_gb": round(mem_total / (1024**3), 2),
+            "memory_used_gb": round(mem_allocated / (1024**3), 2),
+            "memory_reserved_gb": round(mem_reserved / (1024**3), 2),
+            "memory_utilization": round((mem_allocated / mem_total) * 100, 1) if mem_total > 0 else 0,
+            "compute_capability": f"{props.major}.{props.minor}",
+        })
+
+    return {"available": True, "gpus": gpus}
+
+
 # Error handlers
 @app.exception_handler(404)
 async def not_found_handler(request, exc):

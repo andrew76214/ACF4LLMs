@@ -5,6 +5,7 @@ import type {
   ModelSpec,
   ParetoFrontier,
   HealthCheck,
+  GpuStatus,
   CompressionMethod,
   Benchmark,
   LogsResponse,
@@ -99,6 +100,12 @@ export const systemApi = {
   // Health check
   health: async (): Promise<HealthCheck> => {
     const response = await api.get<HealthCheck>('/health');
+    return response.data;
+  },
+
+  // GPU status with detailed info
+  gpu: async (): Promise<GpuStatus> => {
+    const response = await api.get<GpuStatus>('/gpu');
     return response.data;
   },
 

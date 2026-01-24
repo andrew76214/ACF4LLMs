@@ -128,6 +128,21 @@ export interface HealthCheck {
   gpu_count: string;
 }
 
+export interface GpuInfo {
+  index: number;
+  name: string;
+  memory_total_gb: number;
+  memory_used_gb: number;
+  memory_reserved_gb: number;
+  memory_utilization: number;
+  compute_capability: string;
+}
+
+export interface GpuStatus {
+  available: boolean;
+  gpus: GpuInfo[];
+}
+
 // Logs response from API
 export interface LogsResponse {
   logs: string[];
