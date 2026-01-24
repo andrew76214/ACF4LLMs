@@ -305,16 +305,26 @@ async def get_job_logs(
 
 @app.get("/episodes/{job_id}")
 async def get_episodes(job_id: str) -> Dict[str, Any]:
-    """Get episode history for a job including coordinator reasoning."""
+    """Get episode history for a job including coordinator reasoning.
+
+    Works with both API job IDs and filesystem experiment IDs.
+    """
+    experiment_path = None
+
+    # First, try to get from job storage (API jobs)
     job_data = jobs_storage.get(job_id)
-    if job_data is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+    if job_data is not None:
+        experiment_dir = job_data.get("experiment_dir")
+        if experiment_dir:
+            experiment_path = Path(experiment_dir)
 
-    experiment_dir = job_data.get("experiment_dir")
-    if not experiment_dir:
-        return {"episodes": [], "total": 0, "message": "No experiment directory found"}
+    # If not found in job storage, try as filesystem experiment ID
+    if experiment_path is None or not experiment_path.exists():
+        # Try direct path in data/experiments
+        experiment_path = Path("data/experiments") / job_id
 
-    experiment_path = Path(experiment_dir)
+    if not experiment_path or not experiment_path.exists():
+        return {"episodes": [], "total": 0, "message": "Experiment directory not found"}
     if not experiment_path.exists():
         return {"episodes": [], "total": 0, "message": "Experiment directory does not exist"}
 
@@ -430,6 +440,129 @@ async def list_jobs(
     jobs = jobs[:limit]
 
     return [JobStatus(**j) for j in jobs]
+
+
+@app.get("/experiments")
+async def list_experiments(limit: int = 100) -> List[Dict[str, Any]]:
+    """List all experiments from filesystem (including CLI-run experiments)."""
+    experiments_dir = Path("data/experiments")
+    if not experiments_dir.exists():
+        return []
+
+    experiments = []
+
+    for exp_dir in experiments_dir.iterdir():
+        if not exp_dir.is_dir():
+            continue
+
+        # Try to load final_results.json
+        results_path = exp_dir / "final_results.json"
+        model_spec_path = exp_dir / "model_spec.json"
+
+        if not results_path.exists():
+            continue
+
+        try:
+            with open(results_path, "r") as f:
+                results = json.load(f)
+
+            # Load model spec for additional info
+            model_spec = {}
+            if model_spec_path.exists():
+                with open(model_spec_path, "r") as f:
+                    model_spec = json.load(f)
+
+            # Parse timestamp from experiment name (format: model_dataset_YYYYMMDD_HHMMSS)
+            exp_name = results.get("experiment_name", exp_dir.name)
+            created_at = None
+            try:
+                # Extract timestamp portion (last two parts joined by underscore)
+                parts = exp_name.split("_")
+                if len(parts) >= 2:
+                    date_str = parts[-2]  # YYYYMMDD
+                    time_str = parts[-1]  # HHMMSS
+                    if len(date_str) == 8 and len(time_str) == 6:
+                        created_at = datetime.strptime(
+                            f"{date_str}_{time_str}", "%Y%m%d_%H%M%S"
+                        ).isoformat()
+            except (ValueError, IndexError):
+                pass
+
+            # Use file modification time as fallback
+            if not created_at:
+                created_at = datetime.fromtimestamp(
+                    results_path.stat().st_mtime
+                ).isoformat()
+
+            experiment = {
+                "experiment_id": exp_name,
+                "experiment_dir": str(exp_dir),
+                "model_name": results.get("model", model_spec.get("model_name", "unknown")),
+                "dataset": results.get("dataset", model_spec.get("dataset", "unknown")),
+                "status": "completed",
+                "created_at": created_at,
+                "episodes_completed": results.get("episodes_completed", 0),
+                "pareto_solutions": results.get("frontier_summary", {}).get("num_solutions", 0),
+                "best_accuracy": results.get("frontier_summary", {}).get("best_accuracy"),
+                "best_compression": results.get("best_solutions", {}).get("size", {}).get("compression_ratio"),
+                "best_co2_grams": results.get("frontier_summary", {}).get("best_co2_grams"),
+                "visualization_path": results.get("visualization"),
+            }
+
+            experiments.append(experiment)
+
+        except (json.JSONDecodeError, KeyError) as e:
+            # Skip malformed experiment directories
+            continue
+
+    # Sort by creation time (newest first)
+    experiments.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+
+    # Apply limit
+    return experiments[:limit]
+
+
+@app.get("/experiments/{experiment_id}")
+async def get_experiment(experiment_id: str) -> Dict[str, Any]:
+    """Get details of a specific experiment."""
+    experiments_dir = Path("data/experiments")
+    exp_dir = experiments_dir / experiment_id
+
+    if not exp_dir.exists():
+        raise HTTPException(status_code=404, detail="Experiment not found")
+
+    results_path = exp_dir / "final_results.json"
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="Experiment results not found")
+
+    try:
+        with open(results_path, "r") as f:
+            results = json.load(f)
+
+        # Load model spec
+        model_spec_path = exp_dir / "model_spec.json"
+        model_spec = {}
+        if model_spec_path.exists():
+            with open(model_spec_path, "r") as f:
+                model_spec = json.load(f)
+
+        # Load pareto frontier
+        pareto_path = exp_dir / "pareto_frontier.json"
+        pareto_data = None
+        if pareto_path.exists():
+            with open(pareto_path, "r") as f:
+                pareto_data = json.load(f)
+
+        return {
+            "experiment_id": experiment_id,
+            "experiment_dir": str(exp_dir),
+            "results": results,
+            "model_spec": model_spec,
+            "pareto_frontier": pareto_data,
+        }
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse experiment data: {e}")
 
 
 @app.post("/spec/infer")

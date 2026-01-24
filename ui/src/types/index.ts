@@ -203,3 +203,41 @@ export interface EpisodesResponse {
   total: number;
   message?: string;
 }
+
+// Experiment from filesystem (CLI-run experiments)
+export interface Experiment {
+  experiment_id: string;
+  experiment_dir: string;
+  model_name: string;
+  dataset: string;
+  status: 'completed' | 'running' | 'failed';
+  created_at: string;
+  episodes_completed: number;
+  pareto_solutions: number;
+  best_accuracy: number | null;
+  best_compression: number | null;
+  best_co2_grams: number | null;
+  visualization_path: string | null;
+}
+
+export interface ExperimentDetail {
+  experiment_id: string;
+  experiment_dir: string;
+  results: {
+    experiment_name: string;
+    model: string;
+    dataset: string;
+    episodes_completed: number;
+    frontier_summary: {
+      num_solutions: number;
+      best_accuracy: number;
+      best_latency: number;
+      best_size: number;
+      best_co2_grams: number | null;
+    };
+    best_solutions: BestSolutions;
+    visualization: string;
+  };
+  model_spec: ModelSpec;
+  pareto_frontier: ParetoFrontier | null;
+}

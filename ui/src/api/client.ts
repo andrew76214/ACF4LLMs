@@ -10,6 +10,8 @@ import type {
   Benchmark,
   LogsResponse,
   EpisodesResponse,
+  Experiment,
+  ExperimentDetail,
 } from '../types';
 
 // API base URL - uses proxy in development, env variable in production
@@ -86,6 +88,28 @@ export const jobsApi = {
   // Get episode history for a job
   getEpisodes: async (jobId: string): Promise<EpisodesResponse> => {
     const response = await api.get<EpisodesResponse>(`/episodes/${jobId}`);
+    return response.data;
+  },
+};
+
+// Experiments API (filesystem-based, includes CLI-run experiments)
+export const experimentsApi = {
+  // List all experiments from filesystem
+  list: async (limit: number = 100): Promise<Experiment[]> => {
+    const response = await api.get<Experiment[]>(`/experiments?limit=${limit}`);
+    return response.data;
+  },
+
+  // Get experiment details
+  get: async (experimentId: string): Promise<ExperimentDetail> => {
+    const response = await api.get<ExperimentDetail>(`/experiments/${experimentId}`);
+    return response.data;
+  },
+
+  // Get episodes for an experiment (reuse the episodes endpoint with experiment_id as job_id)
+  getEpisodes: async (experimentId: string): Promise<EpisodesResponse> => {
+    // The episodes endpoint works with experiment directories too
+    const response = await api.get<EpisodesResponse>(`/episodes/${experimentId}`);
     return response.data;
   },
 };

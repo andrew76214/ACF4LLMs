@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { jobsApi, specApi, systemApi } from '../api/client';
+import { jobsApi, specApi, systemApi, experimentsApi } from '../api/client';
 import type { CompressionRequest, Job } from '../types';
 
 // Query keys
@@ -9,6 +9,9 @@ export const queryKeys = {
   pareto: (id: string) => ['pareto', id] as const,
   logs: (id: string) => ['logs', id] as const,
   episodes: (id: string) => ['episodes', id] as const,
+  experiments: ['experiments'] as const,
+  experiment: (id: string) => ['experiment', id] as const,
+  experimentEpisodes: (id: string) => ['experimentEpisodes', id] as const,
   health: ['health'] as const,
   gpu: ['gpu'] as const,
   methods: ['methods'] as const,
@@ -129,5 +132,32 @@ export function useModelSpec(modelName: string, dataset: string) {
     queryFn: () => specApi.infer(modelName, dataset),
     enabled: !!modelName && !!dataset,
     retry: 1,
+  });
+}
+
+// Fetch all experiments from filesystem (includes CLI-run experiments)
+export function useExperiments() {
+  return useQuery({
+    queryKey: queryKeys.experiments,
+    queryFn: () => experimentsApi.list(),
+    refetchInterval: 30000, // Refetch every 30 seconds
+  });
+}
+
+// Fetch single experiment details
+export function useExperiment(experimentId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.experiment(experimentId || ''),
+    queryFn: () => experimentsApi.get(experimentId!),
+    enabled: !!experimentId,
+  });
+}
+
+// Fetch episodes for an experiment
+export function useExperimentEpisodes(experimentId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.experimentEpisodes(experimentId || ''),
+    queryFn: () => experimentsApi.getEpisodes(experimentId!),
+    enabled: !!experimentId,
   });
 }

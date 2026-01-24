@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
 import { Experiments } from './pages/Experiments';
 import { ExperimentDetail } from './pages/ExperimentDetail';
+import { FilesystemExperimentDetail } from './pages/FilesystemExperimentDetail';
 import { NewExperiment } from './pages/NewExperiment';
 
 // Create a client
@@ -26,6 +27,7 @@ function App() {
             <Route index element={<Dashboard />} />
             <Route path="experiments" element={<Experiments />} />
             <Route path="experiments/:jobId" element={<ExperimentDetail />} />
+            <Route path="experiment/:experimentId" element={<FilesystemExperimentDetail />} />
             <Route path="new" element={<NewExperiment />} />
           </Route>
         </Routes>
