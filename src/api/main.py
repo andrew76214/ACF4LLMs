@@ -239,6 +239,9 @@ async def run_compression_job(job_id: str, config: Dict[str, Any]):
             budget_hours=24.0,
         )
 
+        # Store experiment directory in job
+        jobs_storage.update(job_id, experiment_dir=str(coordinator.experiment_dir))
+
         # Run compression with log capture
         with LogCapture(job_id, jobs_storage) as log_capture:
             result = await asyncio.to_thread(
@@ -251,7 +254,7 @@ async def run_compression_job(job_id: str, config: Dict[str, Any]):
             job_id,
             status="completed",
             result={
-                "best_solution": result["best_solution"] if result else None,
+                "best_solutions": result.get("best_solutions") if result else None,
                 "pareto_frontier_size": len(result.get("pareto_frontier", [])) if result else 0,
                 "total_strategies_tried": result.get("total_strategies", 0) if result else 0,
                 "compression_achieved": result.get("best_compression_ratio", 1.0) if result else 1.0,
@@ -297,6 +300,114 @@ async def get_job_logs(
         "total": total,
         "offset": offset,
         "limit": limit,
+    }
+
+
+@app.get("/episodes/{job_id}")
+async def get_episodes(job_id: str) -> Dict[str, Any]:
+    """Get episode history for a job including coordinator reasoning."""
+    job_data = jobs_storage.get(job_id)
+    if job_data is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    experiment_dir = job_data.get("experiment_dir")
+    if not experiment_dir:
+        return {"episodes": [], "total": 0, "message": "No experiment directory found"}
+
+    experiment_path = Path(experiment_dir)
+    if not experiment_path.exists():
+        return {"episodes": [], "total": 0, "message": "Experiment directory does not exist"}
+
+    # Load Pareto frontier to check which episodes are Pareto optimal
+    pareto_strategy_ids = set()
+    pareto_path = experiment_path / "pareto_frontier.json"
+    if pareto_path.exists():
+        try:
+            with open(pareto_path, "r") as f:
+                pareto_data = json.load(f)
+                for sol in pareto_data.get("solutions", []):
+                    strategy = sol.get("strategy", {})
+                    if strategy.get("strategy_id"):
+                        pareto_strategy_ids.add(strategy["strategy_id"])
+        except Exception:
+            pass
+
+    episodes = []
+    # Find all episode directories
+    episode_dirs = sorted(experiment_path.glob("episode_*"))
+
+    for episode_dir in episode_dirs:
+        # Extract episode number from directory name
+        dir_name = episode_dir.name
+        try:
+            episode_id = int(dir_name.replace("episode_", "").replace("_pipeline", ""))
+        except ValueError:
+            continue
+
+        # Load strategy.json
+        strategy_path = episode_dir / "strategy.json"
+        strategy_data = None
+        if strategy_path.exists():
+            try:
+                with open(strategy_path, "r") as f:
+                    strategy_data = json.load(f)
+            except Exception:
+                pass
+
+        # Load results.json
+        results_path = episode_dir / "results.json"
+        result_data = None
+        if results_path.exists():
+            try:
+                with open(results_path, "r") as f:
+                    result_data = json.load(f)
+            except Exception:
+                pass
+
+        if strategy_data is None:
+            continue
+
+        # Build episode decision info
+        decision = {
+            "episode_id": episode_id,
+            "action": strategy_data.get("quantization_method", "unknown"),
+            "method": strategy_data.get("quantization_method"),
+            "reasoning": strategy_data.get("coordinator_reasoning", ""),
+            "params": {
+                "bits": strategy_data.get("quantization_bits"),
+                "lora_rank": strategy_data.get("lora_rank"),
+                "pruning_ratio": strategy_data.get("pruning_ratio"),
+                "pruning_method": strategy_data.get("pruning_method"),
+                "asvd_rank_ratio": strategy_data.get("asvd_rank_ratio"),
+                "pipeline_name": strategy_data.get("pipeline_name"),
+            },
+            "timestamp": strategy_data.get("coordinator_decision_timestamp", ""),
+            "skill_recommendations": strategy_data.get("skill_recommendations"),
+        }
+
+        # Filter out None params
+        decision["params"] = {k: v for k, v in decision["params"].items() if v is not None}
+
+        # Check if this episode is Pareto optimal
+        strategy_id = strategy_data.get("strategy_id", "")
+        is_pareto = strategy_id in pareto_strategy_ids
+
+        episode = {
+            "episode_id": episode_id,
+            "decision": decision,
+            "strategy": strategy_data,
+            "result": result_data,
+            "is_pareto": is_pareto,
+        }
+
+        episodes.append(episode)
+
+    # Sort by episode_id
+    episodes.sort(key=lambda x: x["episode_id"])
+
+    return {
+        "episodes": episodes,
+        "total": len(episodes),
     }
 
 

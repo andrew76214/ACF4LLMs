@@ -524,6 +524,8 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
             "action_params": action_params,
             "pipeline_name": pipeline_name,
             "skill_recommendations": skill_recommendations,
+            "coordinator_reasoning": reasoning,
+            "coordinator_decision_timestamp": datetime.now().isoformat(),
             "messages": [
                 AIMessage(content=f"Decided: {action}. {reasoning}")
             ],
@@ -616,11 +618,15 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
                 calibration_dataset=state["dataset"],
             )
 
-            # Save strategy
+            # Save strategy with coordinator reasoning
             episode_dir = Path(state["experiment_dir"]) / f"episode_{state['current_episode']:03d}"
             episode_dir.mkdir(parents=True, exist_ok=True)
+            strategy_data = strategy.model_dump()
+            strategy_data["coordinator_reasoning"] = state.get("coordinator_reasoning", "")
+            strategy_data["coordinator_decision_timestamp"] = state.get("coordinator_decision_timestamp")
+            strategy_data["skill_recommendations"] = state.get("skill_recommendations")
             with open(episode_dir / "strategy.json", "w") as f:
-                json.dump(strategy.model_dump(), f, indent=2, default=str)
+                json.dump(strategy_data, f, indent=2, default=str)
 
             # Execute ASVD compression
             result = None
@@ -673,11 +679,15 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
                 calibration_dataset=state["dataset"],
             )
 
-            # Save strategy
+            # Save strategy with coordinator reasoning
             episode_dir = Path(state["experiment_dir"]) / f"episode_{state['current_episode']:03d}"
             episode_dir.mkdir(parents=True, exist_ok=True)
+            strategy_data = strategy.model_dump()
+            strategy_data["coordinator_reasoning"] = state.get("coordinator_reasoning", "")
+            strategy_data["coordinator_decision_timestamp"] = state.get("coordinator_decision_timestamp")
+            strategy_data["skill_recommendations"] = state.get("skill_recommendations")
             with open(episode_dir / "strategy.json", "w") as f:
-                json.dump(strategy.model_dump(), f, indent=2, default=str)
+                json.dump(strategy_data, f, indent=2, default=str)
 
             # Execute LoRA/QLoRA fine-tuning
             result = None
@@ -731,11 +741,15 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
                 calibration_dataset=state["dataset"],
             )
 
-            # Save strategy
+            # Save strategy with coordinator reasoning
             episode_dir = Path(state["experiment_dir"]) / f"episode_{state['current_episode']:03d}"
             episode_dir.mkdir(parents=True, exist_ok=True)
+            strategy_data = strategy.model_dump()
+            strategy_data["coordinator_reasoning"] = state.get("coordinator_reasoning", "")
+            strategy_data["coordinator_decision_timestamp"] = state.get("coordinator_decision_timestamp")
+            strategy_data["skill_recommendations"] = state.get("skill_recommendations")
             with open(episode_dir / "strategy.json", "w") as f:
-                json.dump(strategy.model_dump(), f, indent=2, default=str)
+                json.dump(strategy_data, f, indent=2, default=str)
 
             # Execute quantization
             result = None
@@ -812,11 +826,15 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
             pruning_granularity=granularity,
         )
 
-        # Save strategy
+        # Save strategy with coordinator reasoning
         episode_dir = Path(state["experiment_dir"]) / f"episode_{state['current_episode']:03d}"
         episode_dir.mkdir(parents=True, exist_ok=True)
+        strategy_data = strategy.model_dump()
+        strategy_data["coordinator_reasoning"] = state.get("coordinator_reasoning", "")
+        strategy_data["coordinator_decision_timestamp"] = state.get("coordinator_decision_timestamp")
+        strategy_data["skill_recommendations"] = state.get("skill_recommendations")
         with open(episode_dir / "strategy.json", "w") as f:
-            json.dump(strategy.model_dump(), f, indent=2, default=str)
+            json.dump(strategy_data, f, indent=2, default=str)
 
         # Execute pruning
         result = None
@@ -961,13 +979,16 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
             calibration_dataset=state["dataset"],
         )
 
-        # Save strategy
+        # Save strategy with coordinator reasoning
         episode_dir = Path(state["experiment_dir"]) / f"episode_{state['current_episode']:03d}"
         episode_dir.mkdir(parents=True, exist_ok=True)
         with open(episode_dir / "strategy.json", "w") as f:
             strategy_data = strategy.model_dump()
             strategy_data["pipeline_name"] = pipeline_name
             strategy_data["pipeline_result"] = result.model_dump() if result else None
+            strategy_data["coordinator_reasoning"] = state.get("coordinator_reasoning", "")
+            strategy_data["coordinator_decision_timestamp"] = state.get("coordinator_decision_timestamp")
+            strategy_data["skill_recommendations"] = state.get("skill_recommendations")
             json.dump(strategy_data, f, indent=2, default=str)
 
         return {
@@ -1286,6 +1307,8 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
             "compressed_model_size_gb": None,
             "current_pipeline": None,
             "pipeline_name": None,
+            "coordinator_reasoning": None,
+            "coordinator_decision_timestamp": None,
         }
 
     def _record_skill_result(

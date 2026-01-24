@@ -8,6 +8,7 @@ export const queryKeys = {
   job: (id: string) => ['job', id] as const,
   pareto: (id: string) => ['pareto', id] as const,
   logs: (id: string) => ['logs', id] as const,
+  episodes: (id: string) => ['episodes', id] as const,
   health: ['health'] as const,
   gpu: ['gpu'] as const,
   methods: ['methods'] as const,
@@ -57,6 +58,16 @@ export function useLogs(jobId: string | undefined, isRunning: boolean = false) {
     queryFn: () => jobsApi.getLogs(jobId!),
     enabled: !!jobId,
     refetchInterval: isRunning ? 2000 : false, // Poll every 2 seconds for running jobs
+  });
+}
+
+// Fetch episode history for a job
+export function useEpisodes(jobId: string | undefined, isRunning: boolean = false) {
+  return useQuery({
+    queryKey: queryKeys.episodes(jobId || ''),
+    queryFn: () => jobsApi.getEpisodes(jobId!),
+    enabled: !!jobId,
+    refetchInterval: isRunning ? 5000 : false, // Poll every 5 seconds for running jobs
   });
 }
 

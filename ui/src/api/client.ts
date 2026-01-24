@@ -9,6 +9,7 @@ import type {
   CompressionMethod,
   Benchmark,
   LogsResponse,
+  EpisodesResponse,
 } from '../types';
 
 // API base URL - uses proxy in development, env variable in production
@@ -79,6 +80,12 @@ export const jobsApi = {
     params.append('offset', offset.toString());
     params.append('limit', limit.toString());
     const response = await api.get<LogsResponse>(`/jobs/${jobId}/logs?${params}`);
+    return response.data;
+  },
+
+  // Get episode history for a job
+  getEpisodes: async (jobId: string): Promise<EpisodesResponse> => {
+    const response = await api.get<EpisodesResponse>(`/episodes/${jobId}`);
     return response.data;
   },
 };

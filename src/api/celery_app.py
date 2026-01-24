@@ -126,7 +126,7 @@ def compress_model_task(
         return {
             "status": "completed",
             "job_id": job_id,
-            "best_solution": result.get("best_solution"),
+            "best_solutions": result.get("best_solutions"),
             "pareto_frontier_size": len(result.get("pareto_frontier", [])),
             "output_dir": str(output_dir),
         }
@@ -279,10 +279,12 @@ def generate_report_task(job_id: str) -> Dict[str, Any]:
         results = json.load(f)
 
     # Generate report
+    best_solutions = results.get("best_solutions", {})
+    best_acc_solution = best_solutions.get("accuracy", {}) if best_solutions else {}
     report = {
         "job_id": job_id,
         "summary": {
-            "best_accuracy": results.get("best_solution", {}).get("accuracy", 0),
+            "best_accuracy": best_acc_solution.get("accuracy", 0) if best_acc_solution else 0,
             "best_compression": results.get("best_compression_ratio", 1),
             "pareto_solutions": len(results.get("pareto_frontier", [])),
             "total_episodes": results.get("total_strategies", 0),

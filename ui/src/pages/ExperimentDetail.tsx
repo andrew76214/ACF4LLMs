@@ -10,7 +10,7 @@ import {
   RefreshCw,
   Terminal,
 } from 'lucide-react';
-import { useJob, usePareto, useLogs } from '../hooks/useJobs';
+import { useJob, usePareto, useLogs, useEpisodes } from '../hooks/useJobs';
 import { formatRelativeTime } from '../hooks/usePolling';
 import { MetricsCard, CompressionRatioMetric } from '../components/MetricsCard';
 import {
@@ -19,6 +19,7 @@ import {
   AccuracyVsCO2Chart,
   AccuracyVsSizeChart,
 } from '../components/ParetoChart';
+import { EpisodeTimeline } from '../components/EpisodeTimeline';
 import type { ParetoPoint, ParetoSolution } from '../types';
 
 // Convert Pareto solutions to chart points
@@ -43,6 +44,10 @@ export function ExperimentDetail() {
   );
   const isRunningOrPending = job?.status === 'running' || job?.status === 'pending';
   const { data: logsData } = useLogs(jobId, isRunningOrPending);
+  const { data: episodesData, isLoading: episodesLoading } = useEpisodes(
+    jobId,
+    isRunningOrPending
+  );
 
   // Auto-scroll logs to bottom
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -173,6 +178,14 @@ export function ExperimentDetail() {
             <div ref={logsEndRef} />
           </div>
         </div>
+      )}
+
+      {/* Episode History Timeline */}
+      {(isRunningOrPending || job.status === 'completed') && (
+        <EpisodeTimeline
+          episodes={episodesData?.episodes || []}
+          isLoading={episodesLoading}
+        />
       )}
 
       {/* Error message */}

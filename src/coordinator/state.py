@@ -87,6 +87,10 @@ class CompressionState(TypedDict):
     baseline_accuracy: Optional[float]  # Baseline model accuracy for computing deltas
     skill_recommendations: Optional[List[Dict[str, Any]]]  # Recommendations from skill memory
 
+    # Coordinator decision tracking
+    coordinator_reasoning: Optional[str]  # LLM reasoning for the current decision
+    coordinator_decision_timestamp: Optional[str]  # ISO timestamp of the decision
+
 
 def create_initial_state(
     model_name: str,
@@ -158,6 +162,10 @@ def create_initial_state(
         # Skill learning context
         baseline_accuracy=baseline_accuracy,
         skill_recommendations=None,
+
+        # Coordinator decision tracking
+        coordinator_reasoning=None,
+        coordinator_decision_timestamp=None,
     )
 
 

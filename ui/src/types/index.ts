@@ -40,8 +40,16 @@ export interface JobProgress {
   pareto_solutions: number;
 }
 
+export interface BestSolutions {
+  accuracy: ParetoSolution | null;
+  latency: ParetoSolution | null;
+  size: ParetoSolution | null;
+  carbon: ParetoSolution | null;
+  balanced: ParetoSolution | null;
+}
+
 export interface JobResult {
-  best_solution: ParetoSolution | null;
+  best_solutions: BestSolutions | null;
   pareto_frontier_size: number;
   total_strategies_tried: number;
   compression_achieved: number;
@@ -161,4 +169,37 @@ export interface ParetoPoint {
   co2: number;
   method: string;
   bits: number | null;
+}
+
+// Episode types for coordinator reasoning display
+export interface EpisodeDecision {
+  episode_id: number;
+  action: string;
+  method: string | null;
+  reasoning: string;
+  params: Record<string, unknown>;
+  timestamp: string;
+  skill_recommendations?: Array<{
+    skill_name: string;
+    reasoning: string;
+    confidence: number;
+  }> | null;
+}
+
+export interface Episode {
+  episode_id: number;
+  decision: EpisodeDecision;
+  strategy: CompressionStrategy & {
+    coordinator_reasoning?: string;
+    coordinator_decision_timestamp?: string;
+    pipeline_name?: string;
+  };
+  result: EvaluationResult | null;
+  is_pareto: boolean;
+}
+
+export interface EpisodesResponse {
+  episodes: Episode[];
+  total: number;
+  message?: string;
 }
