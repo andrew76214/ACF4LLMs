@@ -28,11 +28,14 @@ fi
 # Set CORS for Cloudflare Pages
 # 修改這裡加入你的域名
 export ALLOWED_ORIGINS="https://acf4llms.rstltd.org,https://acf4llms-backend.rstltd.org"
+# Allow Cloudflare Pages preview URLs (e.g., https://abc123.acf4llms.pages.dev)
+export ALLOWED_ORIGIN_REGEX="https://.*\.acf4llms\.pages\.dev"
 export ENVIRONMENT="production"
 
 echo "[2/4] Environment configured"
 echo "  - OPENAI_API_KEY: ${OPENAI_API_KEY:0:10}..."
 echo "  - ALLOWED_ORIGINS: $ALLOWED_ORIGINS"
+echo "  - ALLOWED_ORIGIN_REGEX: $ALLOWED_ORIGIN_REGEX"
 echo "  - ENVIRONMENT: $ENVIRONMENT"
 
 # Check if tunnel config exists

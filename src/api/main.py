@@ -63,6 +63,10 @@ app = FastAPI(
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else []
 ALLOW_CREDENTIALS = os.getenv("CORS_ALLOW_CREDENTIALS", "false").lower() == "true"
 
+# Optional: regex pattern for dynamic origins (e.g., Cloudflare Pages preview URLs)
+# Example: ALLOWED_ORIGIN_REGEX=https://.*\.acf4llms\.pages\.dev
+ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX", "")
+
 # Development mode allows all origins (not recommended for production)
 IS_DEVELOPMENT = os.getenv("ENVIRONMENT", "development").lower() == "development"
 
@@ -80,6 +84,8 @@ app.add_middleware(
     CORSMiddleware,
     # Never use "*" with credentials=True in production
     allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"] if IS_DEVELOPMENT else [],
+    # Regex pattern for dynamic origins (Cloudflare Pages previews, etc.)
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX if ALLOWED_ORIGIN_REGEX else None,
     # Only allow credentials if explicitly enabled and origins are specified
     allow_credentials=ALLOW_CREDENTIALS and bool(ALLOWED_ORIGINS),
     allow_methods=["GET", "POST", "PUT", "DELETE"],
