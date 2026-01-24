@@ -68,13 +68,15 @@ export function FilesystemExperimentDetail() {
 
   const results = experiment.results;
   const paretoFrontier = experiment.pareto_frontier;
-  const paretoPoints = paretoFrontier?.solutions
-    ? solutionsToPoints(paretoFrontier.solutions)
+  // API returns 'frontier' key, but type uses 'solutions' - handle both
+  const solutions = (paretoFrontier as any)?.frontier || paretoFrontier?.solutions || [];
+  const paretoPoints = solutions.length > 0
+    ? solutionsToPoints(solutions)
     : [];
 
   // Find best solution (highest accuracy)
-  const bestSolution = paretoFrontier?.solutions?.reduce(
-    (best, curr) =>
+  const bestSolution = solutions.reduce(
+    (best: ParetoSolution | null, curr: ParetoSolution) =>
       !best || curr.result.accuracy > best.result.accuracy ? curr : best,
     null as ParetoSolution | null
   );
@@ -247,11 +249,11 @@ export function FilesystemExperimentDetail() {
       )}
 
       {/* All solutions table */}
-      {paretoFrontier?.solutions && paretoFrontier.solutions.length > 0 && (
+      {solutions.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <div className="p-4 border-b border-gray-200">
             <h2 className="text-lg font-semibold text-gray-900">
-              All Pareto Solutions ({paretoFrontier.solutions.length})
+              All Pareto Solutions ({solutions.length})
             </h2>
           </div>
           <div className="overflow-x-auto">
@@ -282,7 +284,7 @@ export function FilesystemExperimentDetail() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {paretoFrontier.solutions.map((sol) => (
+                {solutions.map((sol: ParetoSolution) => (
                   <tr
                     key={sol.strategy.strategy_id}
                     className="hover:bg-gray-50"
