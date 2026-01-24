@@ -1,0 +1,78 @@
+# Core LangChain and LangGraph dependencies
+# Updated for LangGraph 1.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+langchain-anthropic>=0.2.0
+langchain-community>=0.3.0
+langgraph>=1.0.4
+
+# Machine Learning and Model Compression
+torch>=2.1.0
+transformers>=4.36.0
+accelerate>=0.25.0
+bitsandbytes>=0.41.0
+peft>=0.7.0
+lm-eval>=0.4.0
+
+# Optimization and Scientific Computing
+numpy>=1.24.0,<2.0.0  # Pin to avoid breaking changes with numpy 2.0
+scipy>=1.11.0
+scikit-learn>=1.3.0
+
+# Data Processing
+pandas>=2.0.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.18.0
+kaleido>=0.2.1
+
+# Web UI
+streamlit>=1.30.0
+
+# GPU Monitoring (optional)
+nvidia-ml-py
+
+# Monitoring and Logging
+prometheus-client>=0.19.0
+python-json-logger>=2.0.7
+mlflow>=2.9.0
+
+# API and Async Support
+aiohttp>=3.9.0
+pydantic>=2.7.4  # Required by langsmith on Python 3.12+
+
+# Environment and Configuration
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+
+# Testing and Development
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+black>=23.0.0
+ruff>=0.1.0
+mypy>=1.5.0
+
+# Model Compression Tools (for actual compression)
+# GPU-backed quantizers (AutoRound/GPTQ/AWQ) require CUDA toolchains and
+# are now listed in requirements.quantization.txt so that base installs
+# work on CPU-only machines. Install them manually when needed.
+optimum>=1.24.0  # Required by gptqmodel for GPTQ quantization
+# llmcompressor>=0.8.0  # Optional: vLLM's llm-compressor for AWQ (install manually if needed)
+trl>=0.7.0  # For distillation
+datasets>=2.14.0  # For benchmarks
+evaluate>=0.4.0  # For evaluation metrics
+codecarbon>=2.3.0  # For energy tracking
+click>=8.1.0  # For CLI
+rich>=13.0.0  # For rich CLI output
+tqdm>=4.65.0  # For progress bars
+
+# Additional required dependencies
+langsmith>=0.1.98  # For LangChain tracing
+tenacity>=8.2.0,<9.0.0  # Pin to avoid conflicts
+jsonpatch>=1.33
+typing-extensions>=4.8.0
+wcmatch>=8.4.0  # Needed for file matching
