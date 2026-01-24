@@ -1,0 +1,26 @@
+# Cloudflare Tunnel Configuration
+# ================================
+#
+# 使用前請修改以下設定：
+# 1. 將 <TUNNEL_ID> 換成你的 Tunnel ID
+# 2. 將 <YOUR_USERNAME> 換成你的用戶名
+# 3. 將 api.yourdomain.com 換成你的域名
+#
+# 然後複製到 ~/.cloudflared/config.yml:
+#   cp cloudflared-config.yml ~/.cloudflared/config.yml
+
+tunnel: <TUNNEL_ID>
+credentials-file: /home/<YOUR_USERNAME>/.cloudflared/<TUNNEL_ID>.json
+
+# Ingress rules - 請求如何路由到本地服務
+ingress:
+  # API 請求路由到 FastAPI 後端
+  - hostname: api.yourdomain.com
+    service: http://localhost:8000
+    originRequest:
+      # 連線設定
+      connectTimeout: 30s
+      noTLSVerify: false
+
+  # 所有其他請求返回 404
+  - service: http_status:404

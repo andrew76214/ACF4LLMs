@@ -82,7 +82,7 @@ export function ArchitectureDiagram() {
         <div className="flex items-center gap-2">
           <GitBranch className="w-5 h-5 text-indigo-600" />
           <h2 className="text-lg font-semibold text-gray-900">Agent Architecture</h2>
-          <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border">LangGraph + GPT-4o</span>
+          <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border">LangGraph + GPT-5.2</span>
         </div>
         {expanded ? (
           <ChevronUp className="w-5 h-5 text-gray-500" />
@@ -194,7 +194,7 @@ export function ArchitectureDiagram() {
                 <div className="w-full max-w-lg">
                   <Node
                     title="Coordinator Node"
-                    subtitle="GPT-4o Decision Engine"
+                    subtitle="GPT-5.2 Decision Engine"
                     icon={<Brain className="w-4 h-4" />}
                     color="border-purple-500"
                     isActive={activeNode === 'coordinator'}
@@ -211,7 +211,7 @@ export function ArchitectureDiagram() {
                       </div>
                       <div className="flex items-start gap-2">
                         <span className="text-purple-600 font-medium">3.</span>
-                        <span>Call GPT-4o API for decision</span>
+                        <span>Call GPT-5.2 API for decision</span>
                       </div>
                       <div className="mt-2 bg-gray-900 rounded-md p-2 text-[10px] font-mono text-gray-300">
                         {`{ "action": "quantization", "method": "gptq", "bits": 4 }`}

@@ -21,8 +21,11 @@ export function Experiments() {
     statusFilter === 'all' ? undefined : statusFilter
   );
 
+  // Ensure jobs is an array
+  const jobsList = Array.isArray(jobs) ? jobs : [];
+
   // Filter jobs by search query
-  const filteredJobs = jobs?.filter((job) =>
+  const filteredJobs = jobsList.filter((job) =>
     searchQuery
       ? job.job_id.toLowerCase().includes(searchQuery.toLowerCase())
       : true
@@ -91,7 +94,7 @@ export function Experiments() {
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-600">
           Failed to load experiments: {error.message}
         </div>
-      ) : !filteredJobs || filteredJobs.length === 0 ? (
+      ) : filteredJobs.length === 0 ? (
         <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
           <p className="text-gray-500 mb-4">
             {searchQuery
@@ -119,27 +122,27 @@ export function Experiments() {
       )}
 
       {/* Stats summary */}
-      {jobs && jobs.length > 0 && (
+      {jobsList.length > 0 && (
         <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 flex items-center justify-between text-sm text-gray-600">
           <span>
-            Showing {filteredJobs?.length || 0} of {jobs.length} experiments
+            Showing {filteredJobs.length} of {jobsList.length} experiments
           </span>
           <div className="flex gap-4">
             <span>
               <span className="font-medium text-green-600">
-                {jobs.filter((j) => j.status === 'completed').length}
+                {jobsList.filter((j) => j.status === 'completed').length}
               </span>{' '}
               completed
             </span>
             <span>
               <span className="font-medium text-blue-600">
-                {jobs.filter((j) => j.status === 'running').length}
+                {jobsList.filter((j) => j.status === 'running').length}
               </span>{' '}
               running
             </span>
             <span>
               <span className="font-medium text-red-600">
-                {jobs.filter((j) => j.status === 'failed').length}
+                {jobsList.filter((j) => j.status === 'failed').length}
               </span>{' '}
               failed
             </span>

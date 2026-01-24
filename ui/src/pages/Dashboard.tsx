@@ -16,19 +16,22 @@ export function Dashboard() {
   const { data: jobs, isLoading } = useJobs();
   const { data: health } = useHealth();
 
+  // Ensure jobs is an array (API might return error or undefined)
+  const jobsList = Array.isArray(jobs) ? jobs : [];
+
   // Calculate stats
   const stats = {
-    total: jobs?.length || 0,
-    running: jobs?.filter((j) => j.status === 'running').length || 0,
-    completed: jobs?.filter((j) => j.status === 'completed').length || 0,
-    failed: jobs?.filter((j) => j.status === 'failed').length || 0,
+    total: jobsList.length,
+    running: jobsList.filter((j) => j.status === 'running').length,
+    completed: jobsList.filter((j) => j.status === 'completed').length,
+    failed: jobsList.filter((j) => j.status === 'failed').length,
   };
 
   // Get recent jobs
-  const recentJobs = jobs?.slice(0, 5) || [];
+  const recentJobs = jobsList.slice(0, 5);
 
   // Get running jobs
-  const runningJobs = jobs?.filter((j) => j.status === 'running') || [];
+  const runningJobs = jobsList.filter((j) => j.status === 'running');
 
   return (
     <div className="space-y-8">
