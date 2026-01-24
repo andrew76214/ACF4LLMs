@@ -1,9 +1,10 @@
 # Cloudflare Pages configuration
-name = "greenai-dashboard"
-compatibility_date = "2024-01-01"
+# For Pages deployment, use: wrangler pages deploy dist --project-name=greenai-dashboard
+# Or configure in Cloudflare Dashboard with Build output directory: dist
 
-[site]
-bucket = "./dist"
+name = "name = 'acf4llms'"
+compatibility_date = "2026-01-24"
 
-# Environment variables (set in Cloudflare Dashboard for production)
-# VITE_API_URL = "https://your-api-domain.com"
+# Environment variables for local dev (production vars set in Cloudflare Dashboard)
+[vars]
+VITE_API_URL = "http://localhost:8000"
