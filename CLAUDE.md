@@ -108,6 +108,7 @@ pytest tests/test_basic.py::test_spec_inference -v
 | **Quantization Wrappers** | `src/tools/quantization_wrapper.py` | Real quantization implementations |
 | **lm-eval Integration** | `src/evaluation/evaluators/lm_eval_evaluator.py` | EleutherAI lm-eval harness wrapper |
 | **Schemas** | `src/common/schemas.py` | Pydantic data models |
+| **Advanced Config** | `src/common/config.py` | Unified configuration system |
 
 ### Episode-Based Workflow
 
@@ -137,6 +138,7 @@ Key enums and models:
 ```
 data/experiments/{experiment_name}/
 ├── model_spec.json           # Inferred model specification
+├── config.json               # Configuration used for this experiment
 ├── pareto_frontier.json      # Pareto optimal solutions
 ├── final_results.json        # Summary and best solutions
 ├── pareto_visualization.html # Interactive chart (open in browser)
@@ -150,6 +152,125 @@ data/experiments/{experiment_name}/
 ```bash
 OPENAI_API_KEY=sk-...  # Required for GPT-4o coordinator
 HF_TOKEN=hf_...        # Optional: for gated models (Llama, etc.)
+
+# Advanced config via environment (prefix: GREENAI_)
+# Format: GREENAI_{SECTION}__{FIELD} (double underscore)
+GREENAI_COORDINATOR__LLM_MODEL=gpt-4-turbo
+GREENAI_COORDINATOR__LLM_TEMPERATURE=0.5
+GREENAI_QUANTIZATION__DEFAULT_BIT_WIDTH=8
+GREENAI_EVALUATION__USE_PROXY=false
+```
+
+## Advanced Configuration
+
+The framework supports a unified configuration system with YAML/JSON files, environment variables, and CLI overrides.
+
+### Configuration Priority (highest to lowest)
+1. CLI arguments (`--llm-model`, `--temperature`, etc.)
+2. Environment variables (`GREENAI_COORDINATOR__LLM_MODEL`, etc.)
+3. Configuration file (`-c config/default.yaml`)
+4. Presets (`--preset balanced`)
+5. Default values
+
+### Quick Start
+
+```bash
+# Use default configuration
+python scripts/run_pipeline.py -m gpt2 -d gsm8k
+
+# Use a preset
+python scripts/run_pipeline.py -m gpt2 -d gsm8k --preset latency_focused
+
+# Use config file with CLI overrides
+python scripts/run_pipeline.py -m gpt2 -d gsm8k -c config/default.yaml --llm-model gpt-4-turbo
+
+# Environment variable override
+GREENAI_COORDINATOR__LLM_MODEL=gpt-4-turbo python scripts/run_pipeline.py -m gpt2 -d gsm8k
+```
+
+### Available Presets
+
+| Preset | Description |
+|--------|-------------|
+| `accuracy_focused` | High accuracy (8-bit, 95% min accuracy, LoRA rank 32) |
+| `latency_focused` | Fast inference (4-bit GPTQ, 85% min accuracy) |
+| `balanced` | Default balance (4-bit GPTQ, 90% min accuracy) |
+| `memory_constrained` | Minimize VRAM (4-bit AWQ, LoRA rank 8) |
+
+### New CLI Options
+
+```bash
+--preset, -p           # Preset configuration (accuracy_focused, latency_focused, balanced, memory_constrained)
+--llm-model            # LLM model for coordinator (gpt-4o, gpt-4-turbo, etc.)
+--temperature          # LLM temperature (0.0-2.0)
+--bit-width            # Default quantization bit width (2, 3, 4, 8)
+--no-proxy             # Disable proxy evaluation (use full dataset)
+```
+
+### Configuration File Structure
+
+See `config/default.yaml` for a fully documented example. Key sections:
+
+```yaml
+coordinator:
+  llm_model: gpt-4o           # LLM for decisions
+  llm_temperature: 0.7        # Decision temperature
+
+quantization:
+  default_bit_width: 4        # 2, 3, 4, or 8
+  default_method: gptq        # autoround, gptq, awq, int8
+
+evaluation:
+  use_proxy: true             # Fast proxy evaluation
+  proxy_samples: 200          # Samples for proxy
+  measure_carbon: true        # Track CO2 emissions
+
+search:
+  method: bandit              # random, bayesian, evolutionary, bandit
+
+reward:
+  accuracy_weight: 1.0        # Multi-objective weights
+  latency_weight: 0.3
+  min_accuracy: 0.9           # Hard constraint
+
+finetuning:
+  lora_rank: 16               # LoRA adapter rank
+
+termination:
+  max_episodes: 10            # Episode limit
+  budget_hours: 2.0           # Time budget
+```
+
+### Config Module Location
+
+- **Module**: `src/common/config.py`
+- **Default Template**: `config/default.yaml`
+
+### Programmatic Usage
+
+```python
+from src.common.config import AdvancedConfig, load_config
+
+# Load from file
+config = AdvancedConfig.from_yaml("config/default.yaml")
+
+# Load preset
+config = AdvancedConfig.from_preset("latency_focused")
+
+# Load with priority merging
+config = load_config(
+    config_path="config/custom.yaml",
+    preset="balanced",
+    cli_overrides={"coordinator": {"llm_model": "gpt-4-turbo"}},
+)
+
+# Use with coordinator
+from src.coordinator.langgraph_coordinator import LangGraphCoordinator
+coordinator = LangGraphCoordinator(
+    model_name="gpt2",
+    dataset="gsm8k",
+    config=config,
+)
 ```
 
 ## Development Notes

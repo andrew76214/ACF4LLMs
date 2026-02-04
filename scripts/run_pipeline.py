@@ -23,7 +23,7 @@ import json
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 
 # Add parent directory to path to import modules
 sys.path.append(str(Path(__file__).parent.parent))
@@ -31,6 +31,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from src.coordinator.langgraph_coordinator import LangGraphCoordinator
 from src.coordinator.spec_inference import infer_spec, format_spec_summary
 from src.common.schemas import Benchmark
+from src.common.config import AdvancedConfig, load_config
 
 
 @click.command()
@@ -90,6 +91,36 @@ from src.common.schemas import Benchmark
     type=click.Path(exists=True),
     help="Path to configuration file (JSON or YAML)",
 )
+@click.option(
+    "--preset",
+    "-p",
+    type=click.Choice(["accuracy_focused", "latency_focused", "balanced", "memory_constrained"]),
+    default=None,
+    help="Use a predefined configuration preset",
+)
+@click.option(
+    "--llm-model",
+    type=str,
+    default=None,
+    help="LLM model for coordinator (e.g., gpt-4o, gpt-4-turbo)",
+)
+@click.option(
+    "--temperature",
+    type=float,
+    default=None,
+    help="LLM temperature for coordinator decisions (0.0-2.0)",
+)
+@click.option(
+    "--bit-width",
+    type=click.Choice(["2", "3", "4", "8"]),
+    default=None,
+    help="Default quantization bit width",
+)
+@click.option(
+    "--no-proxy",
+    is_flag=True,
+    help="Disable proxy evaluation (use full dataset)",
+)
 def main(
     model: str,
     dataset: str,
@@ -100,6 +131,11 @@ def main(
     show_spec: bool,
     output_dir: str,
     config: Optional[str],
+    preset: Optional[str],
+    llm_model: Optional[str],
+    temperature: Optional[float],
+    bit_width: Optional[str],
+    no_proxy: bool,
 ):
     """Agentic Compression Framework - LLM-Driven Model Compression Optimization
 
@@ -126,6 +162,18 @@ def main(
     \b
     # Just show the inferred specification
     python run_pipeline.py -m Qwen/Qwen2-7B -d truthfulqa --show-spec
+
+    \b
+    # Use a preset configuration
+    python run_pipeline.py -m gpt2 -d gsm8k --preset latency_focused
+
+    \b
+    # Override LLM model via CLI
+    python run_pipeline.py -m gpt2 -d gsm8k --llm-model gpt-4-turbo --temperature 0.5
+
+    \b
+    # Use config file with CLI overrides
+    python run_pipeline.py -m gpt2 -d gsm8k -c config/default.yaml --bit-width 8
     """
     # Print banner
     click.echo("=" * 60)
@@ -133,16 +181,44 @@ def main(
     click.echo("=" * 60)
     click.echo()
 
-    # Load config if provided
-    config_dict = {}
-    if config:
-        with open(config, 'r') as f:
-            if config.endswith('.json'):
-                config_dict = json.load(f)
-            elif config.endswith('.yaml') or config.endswith('.yml'):
-                import yaml
-                config_dict = yaml.safe_load(f)
-        click.echo(f"📋 Loaded configuration from {config}")
+    # Build CLI overrides dictionary
+    cli_overrides: Dict[str, Any] = {}
+
+    if llm_model is not None:
+        cli_overrides.setdefault("coordinator", {})["llm_model"] = llm_model
+    if temperature is not None:
+        cli_overrides.setdefault("coordinator", {})["llm_temperature"] = temperature
+    if bit_width is not None:
+        cli_overrides.setdefault("quantization", {})["default_bit_width"] = int(bit_width)
+    if no_proxy:
+        cli_overrides.setdefault("evaluation", {})["use_proxy"] = False
+
+    # Override termination settings from CLI args
+    if episodes != 3:  # Only if non-default
+        cli_overrides.setdefault("termination", {})["max_episodes"] = episodes
+    if budget != 2.0:  # Only if non-default
+        cli_overrides.setdefault("termination", {})["budget_hours"] = budget
+
+    # Load configuration with priority: CLI > Env > File > Preset > Defaults
+    try:
+        advanced_config = load_config(
+            config_path=config,
+            preset=preset,
+            cli_overrides=cli_overrides if cli_overrides else None,
+            apply_env=True,
+        )
+
+        # Log configuration source
+        if config:
+            click.echo(f"📋 Loaded configuration from {config}")
+        if preset:
+            click.echo(f"📋 Using preset: {preset}")
+        if cli_overrides:
+            click.echo(f"📋 Applied CLI overrides: {list(cli_overrides.keys())}")
+
+    except Exception as e:
+        click.echo(f"❌ Error loading configuration: {e}", err=True)
+        sys.exit(1)
 
     # Show specification if requested
     if show_spec:
@@ -175,14 +251,21 @@ def main(
         click.echo("  Set it with: export OPENAI_API_KEY=sk-...", err=True)
         sys.exit(1)
 
+    # Use values from config (already merged with CLI overrides)
+    effective_episodes = advanced_config.termination.max_episodes
+    effective_budget = advanced_config.termination.budget_hours
+
     # Show configuration
     click.echo("📝 Configuration:")
     click.echo(f"  Model: {model}")
     click.echo(f"  Dataset: {dataset}")
-    click.echo(f"  Episodes: {episodes}")
-    click.echo(f"  Budget: {budget:.1f} hours")
+    click.echo(f"  Episodes: {effective_episodes}")
+    click.echo(f"  Budget: {effective_budget:.1f} hours")
     click.echo(f"  Mode: {'Interactive' if interactive else 'Batch'}")
-    click.echo(f"  Coordinator: LangGraph (GPT-4o)")
+    click.echo(f"  Coordinator LLM: {advanced_config.coordinator.llm_model}")
+    click.echo(f"  LLM Temperature: {advanced_config.coordinator.llm_temperature}")
+    click.echo(f"  Default Bit Width: {advanced_config.quantization.default_bit_width}")
+    click.echo(f"  Proxy Evaluation: {advanced_config.evaluation.use_proxy}")
     click.echo()
 
     # Create coordinator
@@ -191,8 +274,7 @@ def main(
         coordinator = LangGraphCoordinator(
             model_name=model,
             dataset=dataset,
-            budget_hours=budget,
-            max_episodes=episodes,
+            config=advanced_config,
             experiment_name=experiment_name,
         )
         click.echo(f"✅ Coordinator initialized")

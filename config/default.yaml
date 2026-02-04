@@ -1,0 +1,207 @@
+# Agentic Compression Framework - Default Configuration
+# =====================================================
+#
+# This file defines all configurable parameters for the compression optimization.
+# Priority order (highest to lowest):
+#   1. CLI arguments (--llm-model, --temperature, etc.)
+#   2. Environment variables (GREENAI_COORDINATOR__LLM_MODEL, etc.)
+#   3. This configuration file
+#   4. Built-in defaults
+#
+# Usage:
+#   python scripts/run_pipeline.py -m MODEL -d DATASET -c config/default.yaml
+#
+# Presets:
+#   Use --preset to load predefined configurations:
+#     --preset accuracy_focused   # High accuracy, less compression
+#     --preset latency_focused    # Fast inference, aggressive compression
+#     --preset balanced           # Balance accuracy/latency/size (default)
+#     --preset memory_constrained # Minimize VRAM usage
+#
+# Environment Variables:
+#   All settings can be overridden via environment variables:
+#     export GREENAI_COORDINATOR__LLM_MODEL=gpt-4-turbo
+#     export GREENAI_QUANTIZATION__DEFAULT_BIT_WIDTH=8
+#   Format: GREENAI_{SECTION}__{FIELD} (note: double underscore)
+
+# -----------------------------------------------------------------------------
+# Coordinator Configuration (LLM Decision-Making)
+# -----------------------------------------------------------------------------
+coordinator:
+  # LLM model for coordinator decisions
+  # Options: gpt-4o, gpt-4-turbo, gpt-4, gpt-3.5-turbo
+  # Note: gpt-4o recommended for best cost/quality balance
+  llm_model: gpt-4o
+
+  # Temperature for decision-making (0.0 = deterministic, 2.0 = creative)
+  # Higher values encourage exploration of diverse strategies
+  llm_temperature: 0.7
+
+  # LLM model for worker agents (quantization, evaluation, search)
+  # Using same model as coordinator ensures consistency
+  worker_model: gpt-4o
+
+  # Temperature for worker agents (0.0 recommended for reproducibility)
+  worker_temperature: 0.0
+
+  # Maximum API call retries on failure
+  max_retries: 3
+
+# -----------------------------------------------------------------------------
+# Quantization Configuration
+# -----------------------------------------------------------------------------
+quantization:
+  # Default bit width for quantization
+  # Options: 2, 3, 4, 8
+  # - 4-bit: Good compression/accuracy balance (recommended)
+  # - 8-bit: Better accuracy, less compression
+  # - 2/3-bit: Aggressive compression, may lose accuracy
+  default_bit_width: 4
+
+  # Default quantization method
+  # Options: autoround, gptq, awq, int8
+  # - gptq: Fast, good accuracy (recommended for most cases)
+  # - autoround: Adaptive rounding, best accuracy preservation
+  # - awq: Activation-aware, good for small models
+  # - int8: Simple 8-bit, fastest to apply
+  default_method: gptq
+
+  # Group size for quantization (larger = more accuracy, less compression)
+  group_size: 128
+
+  # Number of calibration samples
+  # More samples = better calibration but slower
+  calibration_samples: 512
+
+  # Sequence length for calibration data
+  calibration_seq_length: 2048
+
+  # Use symmetric quantization (usually False is better)
+  sym: false
+
+# -----------------------------------------------------------------------------
+# Evaluation Configuration
+# -----------------------------------------------------------------------------
+evaluation:
+  # Use proxy (subset) evaluation for faster iteration
+  # Set to false for final evaluation runs
+  use_proxy: true
+
+  # Number of samples for proxy evaluation
+  # Higher = more accurate but slower
+  proxy_samples: 200
+
+  # Number of samples for full evaluation (null = use entire dataset)
+  full_eval_samples: null
+
+  # Batch size for evaluation
+  # Reduce if running out of memory
+  batch_size: 8
+
+  # Measure carbon emissions during evaluation
+  # Uses codecarbon library when available
+  measure_carbon: true
+
+  # Number of inferences for carbon measurement
+  carbon_inference_count: 500
+
+  # Device for evaluation (null = auto-detect cuda/cpu)
+  device: null
+
+# -----------------------------------------------------------------------------
+# Search Configuration (Strategy Exploration)
+# -----------------------------------------------------------------------------
+search:
+  # Search algorithm
+  # Options: random, bayesian, evolutionary, bandit
+  # - bandit: Multi-armed bandit with UCB (recommended)
+  # - bayesian: Gaussian process optimization
+  # - evolutionary: Genetic algorithm
+  # - random: Random sampling (baseline)
+  method: bandit
+
+  # Exploration vs exploitation ratio (0.0-1.0)
+  # Higher = more exploration of new strategies
+  exploration_ratio: 0.2
+
+  # UCB exploration parameter (for bandit search)
+  # Higher = more exploration
+  ucb_exploration_param: 2.0
+
+  # Mutation rate (for evolutionary search)
+  mutation_rate: 0.1
+
+  # Population size (for evolutionary search)
+  population_size: 10
+
+# -----------------------------------------------------------------------------
+# Reward Configuration (Multi-Objective Optimization)
+# -----------------------------------------------------------------------------
+reward:
+  # Weight for accuracy (higher is better)
+  accuracy_weight: 1.0
+
+  # Weight for latency (lower is better)
+  latency_weight: 0.3
+
+  # Weight for memory usage (lower is better)
+  memory_weight: 0.3
+
+  # Weight for energy/carbon (lower is better)
+  energy_weight: 0.1
+
+  # Minimum acceptable accuracy threshold
+  # Strategies below this threshold are penalized heavily
+  min_accuracy: 0.9
+
+  # Maximum acceptable latency in ms (null = no limit)
+  max_latency_ms: null
+
+  # Maximum acceptable memory in GB (null = no limit)
+  max_memory_gb: null
+
+# -----------------------------------------------------------------------------
+# Fine-tuning Configuration (LoRA/QLoRA)
+# -----------------------------------------------------------------------------
+finetuning:
+  # LoRA adapter rank (higher = more capacity, more VRAM)
+  # Common values: 8, 16, 32, 64
+  lora_rank: 16
+
+  # LoRA alpha parameter (usually 2x rank)
+  lora_alpha: 32
+
+  # LoRA dropout rate
+  lora_dropout: 0.05
+
+  # Learning rate for fine-tuning
+  learning_rate: 0.0002
+
+  # Number of training steps
+  num_train_steps: 100
+
+  # Learning rate warmup steps
+  warmup_steps: 10
+
+  # Gradient accumulation steps (increase if OOM)
+  gradient_accumulation_steps: 4
+
+  # Target modules for LoRA (null = auto-detect based on model)
+  # Examples: ["q_proj", "v_proj"] for LLaMA
+  target_modules: null
+
+# -----------------------------------------------------------------------------
+# Termination Configuration
+# -----------------------------------------------------------------------------
+termination:
+  # Maximum number of compression episodes
+  max_episodes: 10
+
+  # Time budget in hours
+  budget_hours: 2.0
+
+  # Episodes without Pareto improvement before early stopping
+  convergence_patience: 5
+
+  # Minimum improvement to count as progress
+  min_improvement: 0.001

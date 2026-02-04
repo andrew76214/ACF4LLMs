@@ -38,6 +38,7 @@ from src.common.schemas import (
     EvaluationResult,
     CompressionMethod,
 )
+from src.common.config import AdvancedConfig, load_config
 
 # Import tools from agents
 from src.agents.quantization_agent import (
@@ -208,8 +209,9 @@ class LangGraphCoordinator:
         self,
         model_name: str,
         dataset: str,
-        max_episodes: int = 10,
-        budget_hours: float = 2.0,
+        config: Optional[AdvancedConfig] = None,
+        max_episodes: Optional[int] = None,
+        budget_hours: Optional[float] = None,
         experiment_name: Optional[str] = None,
         use_skill_memory: bool = True,
     ):
@@ -218,8 +220,9 @@ class LangGraphCoordinator:
         Args:
             model_name: HuggingFace model name to compress
             dataset: Target benchmark dataset
-            max_episodes: Maximum compression episodes
-            budget_hours: Time budget in hours
+            config: Advanced configuration object (recommended)
+            max_episodes: Maximum compression episodes (deprecated, use config)
+            budget_hours: Time budget in hours (deprecated, use config)
             experiment_name: Name for this experiment
             use_skill_memory: Whether to use skill learning (default: True)
         """
@@ -229,9 +232,34 @@ class LangGraphCoordinator:
 
         self.model_name = model_name
         self.dataset = dataset
-        self.max_episodes = max_episodes
-        self.budget_hours = budget_hours
         self.use_skill_memory = use_skill_memory
+
+        # Handle configuration
+        if config is None:
+            config = load_config()
+
+        # Handle deprecated parameters with warnings
+        if max_episodes is not None:
+            import warnings
+            warnings.warn(
+                "max_episodes parameter is deprecated. Use config.termination.max_episodes instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            config.termination.max_episodes = max_episodes
+
+        if budget_hours is not None:
+            import warnings
+            warnings.warn(
+                "budget_hours parameter is deprecated. Use config.termination.budget_hours instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            config.termination.budget_hours = budget_hours
+
+        self.config = config
+        self.max_episodes = config.termination.max_episodes
+        self.budget_hours = config.termination.budget_hours
 
         # Infer model specification
         self.model_spec = infer_spec(model_name, dataset)
@@ -262,22 +290,29 @@ class LangGraphCoordinator:
         model_family = self.model_spec.model_family if self.model_spec else None
         self.coordinator_prompt = generate_coordinator_prompt(model_family)
 
-        # Initialize LLMs
+        # Initialize LLMs using config
         self.llm_coordinator = ChatOpenAI(
-            model="gpt-5.2",
-            temperature=0.7,
+            model=config.coordinator.llm_model,
+            temperature=config.coordinator.llm_temperature,
+            max_retries=config.coordinator.max_retries,
         )
         self.llm_worker = ChatOpenAI(
-            model="gpt-5.2",
-            temperature=0,
+            model=config.coordinator.worker_model,
+            temperature=config.coordinator.worker_temperature,
+            max_retries=config.coordinator.max_retries,
         )
+
+        print(f"[Config] LLM: {config.coordinator.llm_model}, temp={config.coordinator.llm_temperature}")
 
         # Build the graph
         self.graph = self._build_graph()
 
-        # Save model spec
+        # Save model spec and config
         with open(self.experiment_dir / "model_spec.json", "w") as f:
             json.dump(self.model_spec.model_dump(), f, indent=2, default=str)
+
+        # Save config for reproducibility
+        config.to_json(self.experiment_dir / "config.json")
 
     def _build_graph(self) -> CompiledStateGraph:
         """Build the LangGraph state machine.
@@ -1014,6 +1049,13 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
 
         print(f"  Evaluating on {state['dataset']}...")
 
+        # Get evaluation settings from config
+        use_proxy = self.config.evaluation.use_proxy
+        proxy_samples = self.config.evaluation.proxy_samples
+        measure_carbon = self.config.evaluation.measure_carbon
+        carbon_inference_count = self.config.evaluation.carbon_inference_count
+        device = self.config.evaluation.device or ("cuda" if torch.cuda.is_available() else "cpu")
+
         # Run evaluation
         eval_result = None
         carbon_result = None
@@ -1022,25 +1064,26 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
             eval_result = evaluate_model.invoke({
                 "checkpoint_path": compressed_path or state["model_name"],
                 "benchmarks": [state["dataset"]],
-                "use_proxy": True,
-                "proxy_samples": 200,
+                "use_proxy": use_proxy,
+                "proxy_samples": proxy_samples,
             })
         except Exception as e:
             print(f"  Benchmark evaluation failed: {e}")
 
-        # Measure carbon emissions (500 inferences for balance between speed and accuracy)
-        print(f"  Measuring carbon emissions (500 inferences)...")
-        try:
-            carbon_result = estimate_energy_consumption.invoke({
-                "checkpoint_path": compressed_path or state["model_name"],
-                "num_inferences": 500,
-                "device": "cuda" if torch.cuda.is_available() else "cpu",
-            })
-            print(f"  Carbon: {carbon_result.get('co2_grams', 0):.2f}g CO2, "
-                  f"{carbon_result.get('energy_per_inference_joules', 0):.4f}J/inference")
-        except Exception as e:
-            print(f"  Carbon measurement failed: {e}")
-            carbon_result = None
+        # Measure carbon emissions if enabled
+        if measure_carbon:
+            print(f"  Measuring carbon emissions ({carbon_inference_count} inferences)...")
+            try:
+                carbon_result = estimate_energy_consumption.invoke({
+                    "checkpoint_path": compressed_path or state["model_name"],
+                    "num_inferences": carbon_inference_count,
+                    "device": device,
+                })
+                print(f"  Carbon: {carbon_result.get('co2_grams', 0):.2f}g CO2, "
+                      f"{carbon_result.get('energy_per_inference_joules', 0):.4f}J/inference")
+            except Exception as e:
+                print(f"  Carbon measurement failed: {e}")
+                carbon_result = None
 
         # Build EvaluationResult with carbon metrics
         if eval_result:
@@ -1060,7 +1103,7 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
                 energy_kwh=carbon_result.get("energy_kwh") if carbon_result else None,
                 co2_grams=carbon_result.get("co2_grams") if carbon_result else None,
                 co2_kg=carbon_result.get("co2_kg") if carbon_result else None,
-                num_inferences_measured=500 if carbon_result else None,
+                num_inferences_measured=carbon_inference_count if carbon_result else None,
                 is_carbon_mock=carbon_result.get("is_mock", True) if carbon_result else True,
             )
         else:
@@ -1081,7 +1124,7 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
                 energy_kwh=carbon_result.get("energy_kwh") if carbon_result else None,
                 co2_grams=carbon_result.get("co2_grams") if carbon_result else None,
                 co2_kg=carbon_result.get("co2_kg") if carbon_result else None,
-                num_inferences_measured=500 if carbon_result else None,
+                num_inferences_measured=carbon_inference_count if carbon_result else None,
                 is_carbon_mock=carbon_result.get("is_mock", True) if carbon_result else True,
             )
 
@@ -1508,8 +1551,9 @@ For pipeline: {{"action": "pipeline", "pipeline_name": "aggressive_compression|a
 def create_coordinator(
     model_name: str,
     dataset: str,
-    max_episodes: int = 10,
-    budget_hours: float = 2.0,
+    config: Optional[AdvancedConfig] = None,
+    max_episodes: Optional[int] = None,
+    budget_hours: Optional[float] = None,
     experiment_name: Optional[str] = None,
 ) -> LangGraphCoordinator:
     """Create a LangGraph coordinator instance.
@@ -1517,8 +1561,9 @@ def create_coordinator(
     Args:
         model_name: HuggingFace model name
         dataset: Target benchmark dataset
-        max_episodes: Maximum compression episodes
-        budget_hours: Time budget in hours
+        config: Advanced configuration object (recommended)
+        max_episodes: Maximum compression episodes (deprecated, use config)
+        budget_hours: Time budget in hours (deprecated, use config)
         experiment_name: Name for this experiment
 
     Returns:
@@ -1527,6 +1572,7 @@ def create_coordinator(
     return LangGraphCoordinator(
         model_name=model_name,
         dataset=dataset,
+        config=config,
         max_episodes=max_episodes,
         budget_hours=budget_hours,
         experiment_name=experiment_name,
