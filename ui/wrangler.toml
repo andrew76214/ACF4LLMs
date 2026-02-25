@@ -7,3 +7,6 @@ pages_build_output_dir = "dist"
 # Environment variables for local dev (production vars set in Cloudflare Dashboard)
 [vars]
 VITE_API_URL = "http://localhost:8000"
+
+[assets]
+directory = "./dist"
