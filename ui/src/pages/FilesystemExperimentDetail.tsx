@@ -16,21 +16,8 @@ import {
   AccuracyVsSizeChart,
 } from '../components/ParetoChart';
 import { EpisodeTimeline } from '../components/EpisodeTimeline';
-import type { ParetoPoint, ParetoSolution } from '../types';
-
-// Convert Pareto solutions to chart points
-function solutionsToPoints(solutions: ParetoSolution[]): ParetoPoint[] {
-  return solutions.map((sol) => ({
-    strategyId: sol.strategy.strategy_id,
-    accuracy: sol.result.accuracy,
-    latency: sol.result.latency_ms,
-    memory: sol.result.memory_gb,
-    size: sol.result.model_size_gb,
-    co2: sol.result.co2_grams || 0,
-    method: sol.strategy.methods[0] || 'unknown',
-    bits: sol.strategy.quantization_bits,
-  }));
-}
+import { solutionsToPoints } from '../utils/pareto';
+import type { ParetoSolution } from '../types';
 
 export function FilesystemExperimentDetail() {
   const { experimentId } = useParams<{ experimentId: string }>();
@@ -68,8 +55,7 @@ export function FilesystemExperimentDetail() {
 
   const results = experiment.results;
   const paretoFrontier = experiment.pareto_frontier;
-  // API returns 'frontier' key, but type uses 'solutions' - handle both
-  const solutions = (paretoFrontier as any)?.frontier || paretoFrontier?.solutions || [];
+  const solutions = paretoFrontier?.frontier || [];
   const paretoPoints = solutions.length > 0
     ? solutionsToPoints(solutions)
     : [];

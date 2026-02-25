@@ -1,16 +1,6 @@
 version: '3.8'
 
 services:
-  # Redis for task queue
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - compression_network
-
   # API server
   api:
     build:
@@ -20,17 +10,10 @@ services:
       - "8000:8000"
     environment:
       - CUDA_VISIBLE_DEVICES=0
-      - REDIS_URL=redis://redis:6379
-      - MLFLOW_TRACKING_URI=file:///app/mlruns
     volumes:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
-      - ./mlruns:/app/mlruns
       - ./logs:/app/logs
-    depends_on:
-      - redis
-    networks:
-      - compression_network
     deploy:
       resources:
         reservations:
@@ -38,87 +21,3 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-
-  # Worker for background tasks
-  worker:
-    build:
-      context: .
-      target: worker
-    environment:
-      - CUDA_VISIBLE_DEVICES=0
-      - REDIS_URL=redis://redis:6379
-      - MLFLOW_TRACKING_URI=file:///app/mlruns
-    volumes:
-      - ./data:/app/data
-      - ./checkpoints:/app/checkpoints
-      - ./mlruns:/app/mlruns
-      - ./logs:/app/logs
-    depends_on:
-      - redis
-    networks:
-      - compression_network
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-      replicas: 2
-
-  # Dashboard
-  dashboard:
-    build:
-      context: .
-      target: dashboard
-    ports:
-      - "8501:8501"
-    environment:
-      - API_URL=http://api:8000
-      - MLFLOW_TRACKING_URI=file:///app/mlruns
-    volumes:
-      - ./mlruns:/app/mlruns:ro
-      - ./data:/app/data:ro
-    depends_on:
-      - api
-    networks:
-      - compression_network
-
-  # Prometheus for metrics
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-    networks:
-      - compression_network
-
-  # Grafana for visualization
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
-    depends_on:
-      - prometheus
-    networks:
-      - compression_network
-
-networks:
-  compression_network:
-    driver: bridge
-
-volumes:
-  redis_data:
-  prometheus_data:
-  grafana_data:

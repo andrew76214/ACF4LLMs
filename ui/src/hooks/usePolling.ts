@@ -47,23 +47,6 @@ export function usePolling({ interval, enabled = true, onPoll }: UsePollingOptio
 }
 
 /**
- * Format time duration in human readable format
- */
-export function formatDuration(seconds: number): string {
-  if (seconds < 60) {
-    return `${Math.round(seconds)}s`;
-  }
-  if (seconds < 3600) {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60);
-    return `${mins}m ${secs}s`;
-  }
-  const hours = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  return `${hours}h ${mins}m`;
-}
-
-/**
  * Format relative time (e.g., "2 minutes ago")
  */
 export function formatRelativeTime(dateString: string): string {

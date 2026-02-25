@@ -130,6 +130,17 @@ export interface ParetoFrontier {
   message?: string;
 }
 
+/** Raw pareto_frontier.json shape written by pareto.py (uses 'frontier' key) */
+export interface FilesystemParetoData {
+  frontier: ParetoSolution[];
+  history?: Record<string, unknown>[];
+  metadata?: {
+    num_solutions: number;
+    num_evaluated: number;
+    last_updated: string;
+  };
+}
+
 export interface HealthCheck {
   status: string;
   cuda_available: string;
@@ -248,5 +259,5 @@ export interface ExperimentDetail {
     visualization: string;
   };
   model_spec: ModelSpec;
-  pareto_frontier: ParetoFrontier | null;
+  pareto_frontier: FilesystemParetoData | null;
 }

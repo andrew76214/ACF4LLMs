@@ -25,11 +25,7 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 # Install additional production dependencies
 RUN pip3 install --no-cache-dir \
     fastapi \
-    uvicorn[standard] \
-    streamlit \
-    prometheus-client \
-    redis \
-    celery
+    uvicorn[standard]
 
 # Copy application code
 COPY src/ ./src/
@@ -37,7 +33,7 @@ COPY scripts/ ./scripts/
 COPY config/ ./config/
 
 # Create necessary directories
-RUN mkdir -p /app/data /app/checkpoints /app/logs /app/mlruns
+RUN mkdir -p /app/data /app/checkpoints /app/logs
 
 # Set Python path
 ENV PYTHONPATH=/app:$PYTHONPATH
@@ -54,14 +50,3 @@ FROM base AS api
 
 EXPOSE 8000
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
-
-# ===== Dashboard Stage =====
-FROM base AS dashboard
-
-EXPOSE 8501
-CMD ["streamlit", "run", "src.dashboard/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
-
-# ===== Worker Stage =====
-FROM base AS worker
-
-CMD ["celery", "-A", "src.api.celery_app", "worker", "--loglevel=info", "--concurrency=2"]

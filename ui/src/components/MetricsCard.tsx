@@ -84,61 +84,6 @@ export function MetricsCard({
   );
 }
 
-// Convenience components for specific metrics
-interface SpecificMetricProps {
-  value: number;
-  baseline?: number;
-}
-
-export function AccuracyMetric({ value, baseline }: SpecificMetricProps) {
-  const change = baseline ? ((value - baseline) / baseline) * 100 : undefined;
-  return (
-    <MetricsCard
-      title="Accuracy"
-      value={(value * 100).toFixed(1)}
-      unit="%"
-      change={change}
-      variant={value >= 0.9 ? 'success' : value >= 0.8 ? 'warning' : 'error'}
-    />
-  );
-}
-
-export function LatencyMetric({ value, baseline }: SpecificMetricProps) {
-  const change = baseline ? -((baseline - value) / baseline) * 100 : undefined;
-  return (
-    <MetricsCard
-      title="Latency"
-      value={value.toFixed(1)}
-      unit="ms"
-      change={change}
-    />
-  );
-}
-
-export function MemoryMetric({ value, baseline }: SpecificMetricProps) {
-  const change = baseline ? -((baseline - value) / baseline) * 100 : undefined;
-  return (
-    <MetricsCard
-      title="Memory Usage"
-      value={value.toFixed(2)}
-      unit="GB"
-      change={change}
-    />
-  );
-}
-
-export function CO2Metric({ value }: { value: number }) {
-  return (
-    <MetricsCard
-      title="CO2 Emissions"
-      value={value.toFixed(2)}
-      unit="g"
-      description="per inference"
-      variant={value < 1 ? 'success' : value < 10 ? 'warning' : 'error'}
-    />
-  );
-}
-
 export function CompressionRatioMetric({ value }: { value: number }) {
   return (
     <MetricsCard
