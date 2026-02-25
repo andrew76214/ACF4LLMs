@@ -1,5 +1,6 @@
 # Cloudflare Pages configuration
-name = "acf4llms"
+# ui/wrangler.toml
+name = 'agentic-compression-framework'
 compatibility_date = "2026-01-24"
 pages_build_output_dir = "dist"
 
