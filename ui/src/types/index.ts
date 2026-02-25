@@ -55,6 +55,95 @@ export interface JobResult {
   compression_achieved: number;
 }
 
+// Advanced config section interfaces (all fields optional for partial overrides)
+export interface CoordinatorConfig {
+  llm_model?: string;
+  llm_temperature?: number;
+  worker_model?: string;
+  worker_temperature?: number;
+  max_retries?: number;
+}
+
+export interface QuantizationConfig {
+  default_bit_width?: number;
+  default_method?: 'autoround' | 'gptq' | 'awq' | 'int8';
+  group_size?: number;
+  calibration_samples?: number;
+  calibration_seq_length?: number;
+  sym?: boolean;
+}
+
+export interface EvaluationConfig {
+  use_proxy?: boolean;
+  proxy_samples?: number;
+  full_eval_samples?: number | null;
+  batch_size?: number;
+  measure_carbon?: boolean;
+  carbon_inference_count?: number;
+  device?: string | null;
+}
+
+export interface SearchConfig {
+  method?: 'random' | 'bayesian' | 'evolutionary' | 'bandit';
+  exploration_ratio?: number;
+  ucb_exploration_param?: number;
+  mutation_rate?: number;
+  population_size?: number;
+}
+
+export interface RewardConfig {
+  accuracy_weight?: number;
+  latency_weight?: number;
+  memory_weight?: number;
+  energy_weight?: number;
+  min_accuracy?: number;
+  max_latency_ms?: number | null;
+  max_memory_gb?: number | null;
+}
+
+export interface FinetuningConfig {
+  lora_rank?: number;
+  lora_alpha?: number;
+  lora_dropout?: number;
+  learning_rate?: number;
+  num_train_steps?: number;
+  warmup_steps?: number;
+  gradient_accumulation_steps?: number;
+  target_modules?: string[] | null;
+}
+
+export interface TerminationConfig {
+  max_episodes?: number;
+  budget_hours?: number;
+  convergence_patience?: number;
+  min_improvement?: number;
+}
+
+export interface AdvancedConfig {
+  coordinator?: CoordinatorConfig;
+  quantization?: QuantizationConfig;
+  evaluation?: EvaluationConfig;
+  search?: SearchConfig;
+  reward?: RewardConfig;
+  finetuning?: FinetuningConfig;
+  termination?: TerminationConfig;
+}
+
+export type PresetName =
+  | 'accuracy_focused'
+  | 'latency_focused'
+  | 'balanced'
+  | 'memory_constrained'
+  | 'low_carbon'
+  | 'low_cost';
+
+export interface PresetInfo {
+  name: PresetName;
+  label: string;
+  description: string;
+  icon: string;
+}
+
 export interface CompressionRequest {
   model_name: string;
   dataset: string;
@@ -63,6 +152,8 @@ export interface CompressionRequest {
   compression_methods?: CompressionMethod[];
   constraints?: Record<string, number>;
   use_mock?: boolean;
+  preset?: PresetName;
+  advanced_config?: AdvancedConfig;
 }
 
 export interface ModelSpec {

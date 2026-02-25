@@ -2,7 +2,7 @@ import { NewJobForm } from '../components/NewJobForm';
 
 export function NewExperiment() {
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-4xl">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">New Experiment</h1>
@@ -21,6 +21,9 @@ export function NewExperiment() {
         <h3 className="text-sm font-medium text-gray-700 mb-2">Tips</h3>
         <ul className="text-sm text-gray-600 space-y-1">
           <li>
+            • Select a preset to quickly configure for your optimization goal
+          </li>
+          <li>
             • For small models (like GPT-2), start with 5-10 episodes
           </li>
           <li>
@@ -30,7 +33,7 @@ export function NewExperiment() {
             • Use mock mode to test the workflow without GPU requirements
           </li>
           <li>
-            • The AI will automatically explore different compression methods
+            • Expand "Advanced Settings" to fine-tune quantization, search, and reward parameters
           </li>
         </ul>
       </div>

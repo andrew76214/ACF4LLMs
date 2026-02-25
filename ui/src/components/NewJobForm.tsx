@@ -1,8 +1,76 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useReducer, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Sparkles, AlertCircle } from 'lucide-react';
-import { useCreateJob, useMethods, useBenchmarks, useModelSpec } from '../hooks/useJobs';
-import type { CompressionMethod, CompressionRequest } from '../types';
+import { useCreateJob, useMethods, useBenchmarks, useModelSpec, usePresetConfig } from '../hooks/useJobs';
+import { PresetSelector } from './PresetSelector';
+import { AdvancedConfigForm } from './AdvancedConfigForm';
+import type { CompressionMethod, CompressionRequest, PresetName, AdvancedConfig } from '../types';
+
+// State
+interface FormState {
+  modelName: string;
+  dataset: string;
+  maxEpisodes: number;
+  selectedMethods: CompressionMethod[];
+  useMock: boolean;
+  preset: PresetName | null;
+  presetModified: boolean;
+  advancedConfig: AdvancedConfig;
+}
+
+type FormAction =
+  | { type: 'SET_FIELD'; field: keyof FormState; value: unknown }
+  | { type: 'SELECT_PRESET'; preset: PresetName | null }
+  | { type: 'APPLY_PRESET_CONFIG'; config: AdvancedConfig }
+  | { type: 'SET_ADVANCED_CONFIG'; config: AdvancedConfig }
+  | { type: 'TOGGLE_METHOD'; method: CompressionMethod };
+
+const initialState: FormState = {
+  modelName: '',
+  dataset: 'gsm8k',
+  maxEpisodes: 10,
+  selectedMethods: [],
+  useMock: false,
+  preset: null,
+  presetModified: false,
+  advancedConfig: {},
+};
+
+function formReducer(state: FormState, action: FormAction): FormState {
+  switch (action.type) {
+    case 'SET_FIELD':
+      return { ...state, [action.field]: action.value };
+    case 'SELECT_PRESET':
+      return {
+        ...state,
+        preset: action.preset,
+        presetModified: false,
+        // Clear advanced config when deselecting preset
+        advancedConfig: action.preset ? state.advancedConfig : {},
+      };
+    case 'APPLY_PRESET_CONFIG':
+      return {
+        ...state,
+        advancedConfig: action.config,
+        maxEpisodes: action.config.termination?.max_episodes ?? state.maxEpisodes,
+        presetModified: false,
+      };
+    case 'SET_ADVANCED_CONFIG':
+      return {
+        ...state,
+        advancedConfig: action.config,
+        presetModified: state.preset !== null,
+      };
+    case 'TOGGLE_METHOD': {
+      const methods = state.selectedMethods.includes(action.method)
+        ? state.selectedMethods.filter((m) => m !== action.method)
+        : [...state.selectedMethods, action.method];
+      return { ...state, selectedMethods: methods };
+    }
+    default:
+      return state;
+  }
+}
 
 export function NewJobForm() {
   const navigate = useNavigate();
@@ -10,50 +78,67 @@ export function NewJobForm() {
   const { data: methods } = useMethods();
   const { data: benchmarks } = useBenchmarks();
 
-  // Form state
-  const [modelName, setModelName] = useState('');
-  const [dataset, setDataset] = useState('gsm8k');
-  const [maxEpisodes, setMaxEpisodes] = useState(10);
-  const [selectedMethods, setSelectedMethods] = useState<CompressionMethod[]>([]);
-  const [useMock, setUseMock] = useState(false);
+  const [state, dispatch] = useReducer(formReducer, initialState);
+
+  // Fetch preset config when preset changes
+  const { data: presetConfig } = usePresetConfig(state.preset);
+
+  // Apply preset config when it loads
+  const [appliedPreset, setAppliedPreset] = useState<string | null>(null);
+  useEffect(() => {
+    if (presetConfig && state.preset && state.preset !== appliedPreset) {
+      dispatch({ type: 'APPLY_PRESET_CONFIG', config: presetConfig });
+      setAppliedPreset(state.preset);
+    }
+  }, [presetConfig, state.preset, appliedPreset]);
 
   // Model spec inference
   const {
     data: modelSpec,
     isLoading: specLoading,
     error: specError,
-  } = useModelSpec(modelName, dataset);
+  } = useModelSpec(state.modelName, state.dataset);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
     const request: CompressionRequest = {
-      model_name: modelName,
-      dataset,
-      max_episodes: maxEpisodes,
-      compression_methods: selectedMethods.length > 0 ? selectedMethods : undefined,
-      use_mock: useMock,
+      model_name: state.modelName,
+      dataset: state.dataset,
+      max_episodes: state.maxEpisodes,
+      compression_methods: state.selectedMethods.length > 0 ? state.selectedMethods : undefined,
+      use_mock: state.useMock,
+      preset: state.preset ?? undefined,
+      advanced_config: state.presetModified || !state.preset
+        ? Object.keys(state.advancedConfig).length > 0
+          ? state.advancedConfig
+          : undefined
+        : undefined,
     };
 
     try {
       const job = await createJob.mutateAsync(request);
       navigate(`/experiments/${job.job_id}`);
     } catch (error) {
-      // Error is handled by React Query
       console.error('Failed to create job:', error);
     }
   };
 
-  const toggleMethod = (method: CompressionMethod) => {
-    setSelectedMethods((prev) =>
-      prev.includes(method)
-        ? prev.filter((m) => m !== method)
-        : [...prev, method]
-    );
-  };
-
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Preset Selector */}
+      <PresetSelector
+        selected={state.preset}
+        onSelect={(preset) => {
+          dispatch({ type: 'SELECT_PRESET', preset });
+          if (!preset) setAppliedPreset(null);
+        }}
+        modified={state.presetModified}
+      />
+
+      {/* Divider */}
+      <div className="border-t border-gray-200" />
+
       {/* Model Name */}
       <div>
         <label
@@ -65,8 +150,8 @@ export function NewJobForm() {
         <input
           type="text"
           id="modelName"
-          value={modelName}
-          onChange={(e) => setModelName(e.target.value)}
+          value={state.modelName}
+          onChange={(e) => dispatch({ type: 'SET_FIELD', field: 'modelName', value: e.target.value })}
           placeholder="e.g., gpt2, meta-llama/Meta-Llama-3-8B-Instruct"
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all"
           required
@@ -77,7 +162,7 @@ export function NewJobForm() {
       </div>
 
       {/* Model Spec Preview */}
-      {modelName && (
+      {state.modelName && (
         <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
           <h4 className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
             <Sparkles className="w-4 h-4" />
@@ -126,8 +211,8 @@ export function NewJobForm() {
         </label>
         <select
           id="dataset"
-          value={dataset}
-          onChange={(e) => setDataset(e.target.value)}
+          value={state.dataset}
+          onChange={(e) => dispatch({ type: 'SET_FIELD', field: 'dataset', value: e.target.value })}
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all"
         >
           {(Array.isArray(benchmarks) ? benchmarks : ['gsm8k', 'commonsenseqa', 'truthfulqa', 'mmlu']).map(
@@ -151,8 +236,19 @@ export function NewJobForm() {
         <input
           type="number"
           id="maxEpisodes"
-          value={maxEpisodes}
-          onChange={(e) => setMaxEpisodes(parseInt(e.target.value, 10))}
+          value={state.maxEpisodes}
+          onChange={(e) => {
+            const val = parseInt(e.target.value, 10);
+            dispatch({ type: 'SET_FIELD', field: 'maxEpisodes', value: val });
+            // Sync with advanced config termination
+            dispatch({
+              type: 'SET_ADVANCED_CONFIG',
+              config: {
+                ...state.advancedConfig,
+                termination: { ...state.advancedConfig.termination, max_episodes: val },
+              },
+            });
+          }}
           min={1}
           max={100}
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all"
@@ -173,9 +269,9 @@ export function NewJobForm() {
               <button
                 key={method}
                 type="button"
-                onClick={() => toggleMethod(method as CompressionMethod)}
+                onClick={() => dispatch({ type: 'TOGGLE_METHOD', method: method as CompressionMethod })}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  selectedMethods.includes(method as CompressionMethod)
+                  state.selectedMethods.includes(method as CompressionMethod)
                     ? 'bg-primary-100 text-primary-700 border-2 border-primary-500'
                     : 'bg-gray-100 text-gray-600 border-2 border-transparent hover:bg-gray-200'
                 }`}
@@ -195,8 +291,8 @@ export function NewJobForm() {
         <input
           type="checkbox"
           id="useMock"
-          checked={useMock}
-          onChange={(e) => setUseMock(e.target.checked)}
+          checked={state.useMock}
+          onChange={(e) => dispatch({ type: 'SET_FIELD', field: 'useMock', value: e.target.checked })}
           className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
         />
         <label htmlFor="useMock" className="text-sm text-gray-600">
@@ -204,10 +300,18 @@ export function NewJobForm() {
         </label>
       </div>
 
+      {/* Advanced Config */}
+      <div className="border-t border-gray-200 pt-4">
+        <AdvancedConfigForm
+          config={state.advancedConfig}
+          onChange={(config) => dispatch({ type: 'SET_ADVANCED_CONFIG', config })}
+        />
+      </div>
+
       {/* Submit Button */}
       <button
         type="submit"
-        disabled={createJob.isPending || !modelName}
+        disabled={createJob.isPending || !state.modelName}
         className="w-full py-3 px-4 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
       >
         {createJob.isPending ? (

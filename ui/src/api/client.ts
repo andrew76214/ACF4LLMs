@@ -12,6 +12,8 @@ import type {
   EpisodesResponse,
   Experiment,
   ExperimentDetail,
+  PresetInfo,
+  AdvancedConfig,
 } from '../types';
 
 // API base URL - uses proxy in development, env variable in production
@@ -149,6 +151,18 @@ export const systemApi = {
   // List available benchmarks
   benchmarks: async (): Promise<Benchmark[]> => {
     const response = await api.get<Benchmark[]>('/benchmarks');
+    return response.data;
+  },
+
+  // List available presets
+  presets: async (): Promise<PresetInfo[]> => {
+    const response = await api.get<PresetInfo[]>('/presets');
+    return response.data;
+  },
+
+  // Get resolved config for a preset
+  presetConfig: async (name: string): Promise<AdvancedConfig> => {
+    const response = await api.get<AdvancedConfig>(`/presets/${name}`);
     return response.data;
   },
 };

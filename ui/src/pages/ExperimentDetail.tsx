@@ -18,6 +18,7 @@ import {
   AccuracyVsCO2Chart,
   AccuracyVsSizeChart,
 } from '../components/ParetoChart';
+import { ParetoChart3D } from '../components/ParetoChart3D';
 import { EpisodeTimeline } from '../components/EpisodeTimeline';
 import { solutionsToPoints } from '../utils/pareto';
 import type { ParetoSolution } from '../types';
@@ -279,6 +280,7 @@ export function ExperimentDetail() {
               <h2 className="text-lg font-semibold text-gray-900">
                 Pareto Frontier Visualization
               </h2>
+              <ParetoChart3D data={paretoPoints} />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <AccuracyVsLatencyChart data={paretoPoints} />
                 <AccuracyVsMemoryChart data={paretoPoints} />

@@ -16,6 +16,8 @@ export const queryKeys = {
   gpu: ['gpu'] as const,
   methods: ['methods'] as const,
   benchmarks: ['benchmarks'] as const,
+  presets: ['presets'] as const,
+  presetConfig: (name: string) => ['presetConfig', name] as const,
   spec: (model: string, dataset: string) => ['spec', model, dataset] as const,
 };
 
@@ -122,6 +124,25 @@ export function useBenchmarks() {
     queryKey: queryKeys.benchmarks,
     queryFn: systemApi.benchmarks,
     staleTime: Infinity, // Benchmarks don't change
+  });
+}
+
+// Fetch available presets
+export function usePresets() {
+  return useQuery({
+    queryKey: queryKeys.presets,
+    queryFn: systemApi.presets,
+    staleTime: Infinity, // Presets don't change at runtime
+  });
+}
+
+// Fetch resolved config for a preset
+export function usePresetConfig(name: string | null) {
+  return useQuery({
+    queryKey: queryKeys.presetConfig(name || ''),
+    queryFn: () => systemApi.presetConfig(name!),
+    enabled: !!name,
+    staleTime: Infinity,
   });
 }
 

@@ -431,6 +431,49 @@ class AdvancedConfig(BaseModel):
                     "gradient_accumulation_steps": 8,
                 },
             },
+            "low_carbon": {
+                "quantization": {
+                    "default_bit_width": 4,
+                    "default_method": "awq",
+                },
+                "evaluation": {
+                    "measure_carbon": True,
+                    "carbon_inference_count": 1000,
+                },
+                "reward": {
+                    "accuracy_weight": 0.5,
+                    "latency_weight": 0.2,
+                    "memory_weight": 0.2,
+                    "energy_weight": 2.0,
+                    "min_accuracy": 0.85,
+                },
+                "termination": {
+                    "convergence_patience": 7,
+                },
+            },
+            "low_cost": {
+                "quantization": {
+                    "default_bit_width": 4,
+                    "default_method": "gptq",
+                },
+                "reward": {
+                    "accuracy_weight": 0.5,
+                    "latency_weight": 1.0,
+                    "memory_weight": 1.5,
+                    "energy_weight": 0.5,
+                    "min_accuracy": 0.85,
+                    "max_memory_gb": 8.0,
+                },
+                "evaluation": {
+                    "use_proxy": True,
+                    "proxy_samples": 100,
+                },
+                "finetuning": {
+                    "lora_rank": 8,
+                    "num_train_steps": 50,
+                    "gradient_accumulation_steps": 8,
+                },
+            },
         }
 
         if preset_name not in presets:

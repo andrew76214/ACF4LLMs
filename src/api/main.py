@@ -149,6 +149,8 @@ class CompressionRequest(BaseModel):
     compression_methods: Optional[List[str]] = Field(default=None, description="Specific methods to use")
     constraints: Optional[Dict[str, float]] = Field(default=None, description="Performance constraints")
     use_mock: bool = Field(default=False, description="Use mock compression for testing")
+    preset: Optional[str] = Field(default=None, description="Preset name (accuracy_focused, latency_focused, balanced, memory_constrained, low_carbon, low_cost)")
+    advanced_config: Optional[Dict[str, Any]] = Field(default=None, description="Advanced config overrides")
 
 
 class JobStatus(BaseModel):
@@ -185,6 +187,8 @@ async def root():
             "POST /spec/infer": "Infer model specification",
             "GET /pareto/{job_id}": "Get Pareto frontier",
             "GET /download/{job_id}/{checkpoint_id}": "Download compressed model",
+            "GET /presets": "List available presets",
+            "GET /presets/{name}": "Get preset configuration",
         }
     }
 
@@ -227,6 +231,8 @@ async def start_compression(
 
 async def run_compression_job(job_id: str, config: Dict[str, Any]):
     """Run compression job in background."""
+    from src.common.config import load_config
+
     # Initialize logs in job storage
     jobs_storage.update(job_id, logs=[])
 
@@ -234,12 +240,19 @@ async def run_compression_job(job_id: str, config: Dict[str, Any]):
         # Update status
         jobs_storage.update(job_id, status="running", updated_at=datetime.now())
 
+        # Build advanced config from preset + overrides
+        advanced_config = load_config(
+            preset=config.get("preset"),
+            cli_overrides=config.get("advanced_config"),
+        )
+        if config.get("max_episodes"):
+            advanced_config.termination.max_episodes = config["max_episodes"]
+
         # Initialize coordinator
         coordinator = LangGraphCoordinator(
             model_name=config["model_name"],
             dataset=config["dataset"],
-            max_episodes=config["max_episodes"],
-            budget_hours=24.0,
+            config=advanced_config,
         )
 
         # Store experiment directory in job
@@ -576,6 +589,32 @@ async def infer_model_spec(request: ModelSpecRequest) -> Dict[str, Any]:
         return spec.model_dump()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/presets")
+async def list_presets() -> List[Dict[str, str]]:
+    """List available configuration presets."""
+    preset_meta = [
+        {"name": "accuracy_focused", "label": "Accuracy Focused", "description": "Prioritize accuracy over compression (8-bit, 95% min accuracy)", "icon": "Target"},
+        {"name": "latency_focused", "label": "Latency Focused", "description": "Prioritize low inference latency (4-bit GPTQ, 85% min accuracy)", "icon": "Zap"},
+        {"name": "balanced", "label": "Balanced", "description": "Balance between accuracy, latency, and size (4-bit, 90% min accuracy)", "icon": "Scale"},
+        {"name": "memory_constrained", "label": "Memory Constrained", "description": "Minimize VRAM usage (4-bit AWQ, LoRA rank 8)", "icon": "HardDrive"},
+        {"name": "low_carbon", "label": "Low Carbon", "description": "Minimize carbon emissions (energy weight 2x, carbon tracking enabled)", "icon": "Leaf"},
+        {"name": "low_cost", "label": "Low Cost", "description": "Minimize inference cost and hardware requirements (8GB max memory)", "icon": "DollarSign"},
+    ]
+    return preset_meta
+
+
+@app.get("/presets/{preset_name}")
+async def get_preset_config(preset_name: str) -> Dict[str, Any]:
+    """Get the resolved configuration for a preset."""
+    from src.common.config import AdvancedConfig
+
+    try:
+        config = AdvancedConfig.from_preset(preset_name)
+        return config.model_dump()
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/pareto/{job_id}")
